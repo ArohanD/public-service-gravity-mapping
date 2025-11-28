@@ -7,31 +7,19 @@ from get_point import get_point
 
 arcpy.env.overwriteOutput = True
 
-# Default parameters for CLI usage
+# Default parameters
 DEFAULT_WEB_LAYER = "https://services6.arcgis.com/Do88DoK2xjTUCXd1/arcgis/rest/services/OSM_NA_Leisure/FeatureServer/0"
 DEFAULT_DEFINITION_QUERY = "leisure = 'park'"
 DEFAULT_RADIUS = 50.0
 DEFAULT_COORDS = (-8784459.1687, 4294077.940800004)
 DEFAULT_OUT_FC = "c:\\gispy\\scratch\\parks_in_radius.shp"
 
-arcpy.AddMessage(f"sys.argv: {sys.argv}")
 
-# Check if running as ArcGIS tool or standalone CLI
-point_param = arcpy.GetParameter(0)
-
-if point_param is not None:
-    # Running as ArcGIS tool - use GetParameter
-    point = point_param
-    radius = arcpy.GetParameter(1)
-    parks = arcpy.GetParameter(2)
-    out_fc = arcpy.GetParameterAsText(3)
-    arcpy.AddMessage("Running as ArcGIS tool")
-else:
-    # Running standalone CLI - parse command line: python get_parks.py [x,y] [radius] [parks_url] [out_fc]
+def parse_cli_args():
+    """Parse command line arguments for standalone mode."""
     if len(sys.argv) > 1:
         coords = sys.argv[1].split(',')
-        x = float(coords[0])
-        y = float(coords[1])
+        x, y = float(coords[0]), float(coords[1])
     else:
         x, y = DEFAULT_COORDS
     
@@ -39,56 +27,49 @@ else:
     parks = sys.argv[3] if len(sys.argv) > 3 else DEFAULT_WEB_LAYER
     out_fc = sys.argv[4] if len(sys.argv) > 4 else DEFAULT_OUT_FC
     
-    point = (x, y)  # Store as tuple for standalone mode
-    arcpy.AddMessage("Running standalone CLI")
+    return (x, y), radius, parks, out_fc
 
 
-def get_parks(point, radius):
-    """
-    Get parks within a radius of a point. Returns a feature class of parks that intersect the buffer.
-    """
+def get_parks(point, radius, parks, out_fc):
+    """Get parks within a radius of a point. Returns a feature class of parks that intersect the buffer."""
+
+    running_in_arc = not isinstance(point, tuple)
     
-    # Get XY - handle both feature (ArcGIS tool) and tuple (standalone CLI)
-    if isinstance(point, tuple):
-        # Standalone CLI mode: point is already (x, y)
-        x, y = point
-    else:
-        # ArcGIS tool mode: extract from feature
-        x, y = get_point(point)
+    # Extract coordinates from point (handle both feature and tuple)
+    x, y = get_point(point) if running_in_arc else point
     
-    # Make a point geometry in the same spatial ref as the parks layer
+    # Create point geometry and buffer
     sr = arcpy.Describe(parks).spatialReference
     pt_geom = arcpy.PointGeometry(arcpy.Point(x, y), sr)
-
-    # Buffer the point by <radius> meters
     buffer_fc = "in_memory\\click_buffer"
     arcpy.analysis.Buffer(pt_geom, buffer_fc, f"{radius} Meters")
 
-    # Select parks that intersect the buffer
-    parks_lyr = "parks_lyr"
+    # Create parks layer with definition query if using URL
+    definition_query = DEFAULT_DEFINITION_QUERY if not running_in_arc else None
+    arcpy.management.MakeFeatureLayer(parks, "parks_lyr", definition_query)
     
-    # Apply definition query when using web layer URL (standalone CLI mode)
-    if isinstance(parks, str) and parks.startswith("http"):
-        arcpy.management.MakeFeatureLayer(parks, parks_lyr, DEFAULT_DEFINITION_QUERY)
-    else:
-        # ArcGIS tool mode - layer may already have definition query applied
-        arcpy.management.MakeFeatureLayer(parks, parks_lyr)
-    
-    arcpy.management.SelectLayerByLocation(
-        in_layer=parks_lyr,
-        overlap_type="INTERSECT",
-        select_features=buffer_fc
-    )
+    # Select and copy parks that intersect buffer
+    arcpy.management.SelectLayerByLocation("parks_lyr", "INTERSECT", buffer_fc)
+    arcpy.management.CopyFeatures("parks_lyr", out_fc)
 
-    # Copy selected parks to the output feature class
-    arcpy.management.CopyFeatures(parks_lyr, out_fc)
-
-    # Report how many parks we found
+    # Report results
     count = int(arcpy.management.GetCount(out_fc)[0])
     arcpy.AddMessage(f"Found {count} park polygons.")
-
+    
     return out_fc
 
 
-# Run when the script is executed as a tool
-get_parks(point, radius)
+# Main execution
+point_param = arcpy.GetParameter(0)
+
+if point_param is not None:
+    # Running as ArcGIS tool
+    point = point_param
+    radius = arcpy.GetParameter(1)
+    parks = arcpy.GetParameter(2)
+    out_fc = arcpy.GetParameterAsText(3)
+else:
+    # Running as standalone CLI
+    point, radius, parks, out_fc = parse_cli_args()
+
+get_parks(point, radius, parks, out_fc)
