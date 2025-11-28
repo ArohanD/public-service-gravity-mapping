@@ -4,7 +4,7 @@
 import arcpy
 from get_point import get_point
 
-# --- Script tool parameters ---
+# Script tool parameters
 point = arcpy.GetParameter(0)              # click point (Feature Set / layer)
 radius = arcpy.GetParameter(1)             # radius in meters (Double)
 parks = arcpy.GetParameter(2)              # parks polygon layer
@@ -14,6 +14,10 @@ arcpy.AddMessage(f"Radius: {radius} meters")
 
 
 def get_parks(point, radius):
+    """
+    Get parks within a radius of a point. Returns a feature class of parks that intersect the buffer.
+    """
+    
     # Get XY from the helper
     x, y = get_point(point)
     arcpy.AddMessage(f"Clicked point: {x}, {y}")

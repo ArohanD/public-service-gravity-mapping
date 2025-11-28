@@ -4,6 +4,10 @@ import urllib.request
 import urllib.parse
 
 def fetch_isochrone(lon, lat, token):
+    """
+    Fetch an isochrone from the Mapbox API for a given longitude and latitude.
+    Returns a JSON object containing the isochrone polygons, or None on error.
+    """
     base_url = "https://api.mapbox.com/isochrone/v1/mapbox/driving-traffic"
     coords = f"{lon},{lat}"
 
@@ -17,10 +21,13 @@ def fetch_isochrone(lon, lat, token):
     url = f"{base_url}/{coords}?{urllib.parse.urlencode(params)}"
     arcpy.AddMessage(f"Requesting isochrone: {url}")
 
-    with urllib.request.urlopen(url) as response:
-        text = response.read().decode("utf-8")
-
-    return json.loads(text)
+    try:
+        with urllib.request.urlopen(url) as response:
+            text = response.read().decode("utf-8")
+        return json.loads(text)
+    except Exception as e:
+        arcpy.AddError(f"Failed to fetch isochrone for ({lon}, {lat}): {e}")
+        return None
 
 
 # Script tool params
@@ -38,7 +45,7 @@ def get_centroid_lonlat(geom, target_sr):
     Returns (lon, lat)
     """
     # centroid is a Point (not a PointGeometry)
-    centroid = geom.centroid               # Point
+    centroid = geom.centroid    # Point
 
     # Wrap in PointGeometry so we can project
     point_geom = arcpy.PointGeometry(
@@ -47,18 +54,21 @@ def get_centroid_lonlat(geom, target_sr):
     )
 
     # Project the point geometry
-    centroid_wgs = point_geom.projectAs(target_sr)   # PointGeometry
+    centroid_wgs = point_geom.projectAs(target_sr)  # PointGeometry
 
     # Get the underlying Point and return its X/Y
-    pt = centroid_wgs.firstPoint                     # Point
+    pt = centroid_wgs.firstPoint    # Point
     return pt.X, pt.Y
 
 with arcpy.da.SearchCursor(parks_layer, ["SHAPE@"]) as cursor:
     for (park_geom,) in cursor:
         lon, lat = get_centroid_lonlat(park_geom, wgs84)
-        arcpy.AddMessage(f"[STEP 5] Park centroid: lon={lon}, lat={lat}")
+        arcpy.AddMessage(f"Park centroid: lon={lon}, lat={lat}")
 
         iso_data = fetch_isochrone(lon, lat, token)
+        
+        if iso_data is None:
+            continue
 
         for feat in iso_data.get("features", []):
             geojson_geom = feat["geometry"]
@@ -67,13 +77,13 @@ with arcpy.da.SearchCursor(parks_layer, ["SHAPE@"]) as cursor:
 
 if iso_geoms:
     arcpy.CopyFeatures_management(iso_geoms, out_fc)
-    arcpy.AddMessage(f"[STEP 5] Created {len(iso_geoms)} isochrone polygons total.")
+    arcpy.AddMessage(f"Created {len(iso_geoms)} isochrone polygons total.")
 
     aprx = arcpy.mp.ArcGISProject("CURRENT")
     m = aprx.activeMap
     m.addDataFromPath(out_fc)
 else:
-    arcpy.AddWarning("[STEP 5] No isochrones were created.")
+    arcpy.AddWarning("No isochrones were created.")
 
 
 
