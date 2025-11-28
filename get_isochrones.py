@@ -3,6 +3,8 @@ import json
 import urllib.request
 import urllib.parse
 
+from config import MAPBOX_TOKEN
+
 def fetch_isochrone(lon, lat, token):
     """
     Fetch an isochrone from the Mapbox API for a given longitude and latitude.
@@ -34,6 +36,12 @@ def fetch_isochrone(lon, lat, token):
 parks_layer = arcpy.GetParameter(0)        # Feature Layer of parks
 token = arcpy.GetParameterAsText(1)        # Mapbox token
 out_fc = arcpy.GetParameterAsText(2)       # Output feature class
+
+# Defaults for standalone execution
+if not parks_layer:
+    parks_layer = r"..\Data\samples\OSM_NA_Leisure_GetParks_50.shp"
+if not token:
+    token = MAPBOX_TOKEN
 
 wgs84 = arcpy.SpatialReference(4326)
 iso_geoms = []
@@ -76,12 +84,19 @@ with arcpy.da.SearchCursor(parks_layer, ["SHAPE@"]) as cursor:
             iso_geoms.append(g)
 
 if iso_geoms:
-    arcpy.CopyFeatures_management(iso_geoms, out_fc)
     arcpy.AddMessage(f"Created {len(iso_geoms)} isochrone polygons total.")
-
-    aprx = arcpy.mp.ArcGISProject("CURRENT")
-    m = aprx.activeMap
-    m.addDataFromPath(out_fc)
+    
+    if not out_fc:
+        # Running standalone - save to scratch
+        out_fc = r"C:\gispy\scratch\OSM_NA_Leisure_GetParks_50_getIsochrones.shp"
+        arcpy.CopyFeatures_management(iso_geoms, out_fc)
+        arcpy.AddMessage(f"Saved to: {out_fc}")
+    else:
+        # Running as a tool - save to specified output and add to map
+        arcpy.CopyFeatures_management(iso_geoms, out_fc)
+        aprx = arcpy.mp.ArcGISProject("CURRENT")
+        m = aprx.activeMap
+        m.addDataFromPath(out_fc)
 else:
     arcpy.AddWarning("No isochrones were created.")
 
