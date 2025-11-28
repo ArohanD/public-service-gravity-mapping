@@ -2,15 +2,45 @@
 # representing all parks that touch the radius.
 
 import arcpy
+import sys
 from get_point import get_point
 
-# Script tool parameters
-point = arcpy.GetParameter(0)              # click point (Feature Set / layer)
-radius = arcpy.GetParameter(1)             # radius in meters (Double)
-parks = arcpy.GetParameter(2)              # parks polygon layer
-out_fc = arcpy.GetParameterAsText(3)       # output feature class path (string)
+arcpy.env.overwriteOutput = True
 
-arcpy.AddMessage(f"Radius: {radius} meters")
+# Default parameters for CLI usage
+DEFAULT_WEB_LAYER = "https://services6.arcgis.com/Do88DoK2xjTUCXd1/arcgis/rest/services/OSM_NA_Leisure/FeatureServer/0"
+DEFAULT_DEFINITION_QUERY = "leisure = 'park'"
+DEFAULT_RADIUS = 50.0
+DEFAULT_COORDS = (-8784459.1687, 4294077.940800004)
+DEFAULT_OUT_FC = "c:\\gispy\\scratch\\parks_in_radius.shp"
+
+arcpy.AddMessage(f"sys.argv: {sys.argv}")
+
+# Check if running as ArcGIS tool or standalone CLI
+point_param = arcpy.GetParameter(0)
+
+if point_param is not None:
+    # Running as ArcGIS tool - use GetParameter
+    point = point_param
+    radius = arcpy.GetParameter(1)
+    parks = arcpy.GetParameter(2)
+    out_fc = arcpy.GetParameterAsText(3)
+    arcpy.AddMessage("Running as ArcGIS tool")
+else:
+    # Running standalone CLI - parse command line: python get_parks.py [x,y] [radius] [parks_url] [out_fc]
+    if len(sys.argv) > 1:
+        coords = sys.argv[1].split(',')
+        x = float(coords[0])
+        y = float(coords[1])
+    else:
+        x, y = DEFAULT_COORDS
+    
+    radius = float(sys.argv[2]) if len(sys.argv) > 2 else DEFAULT_RADIUS
+    parks = sys.argv[3] if len(sys.argv) > 3 else DEFAULT_WEB_LAYER
+    out_fc = sys.argv[4] if len(sys.argv) > 4 else DEFAULT_OUT_FC
+    
+    point = (x, y)  # Store as tuple for standalone mode
+    arcpy.AddMessage("Running standalone CLI")
 
 
 def get_parks(point, radius):
@@ -18,10 +48,14 @@ def get_parks(point, radius):
     Get parks within a radius of a point. Returns a feature class of parks that intersect the buffer.
     """
     
-    # Get XY from the helper
-    x, y = get_point(point)
-    arcpy.AddMessage(f"Clicked point: {x}, {y}")
-
+    # Get XY - handle both feature (ArcGIS tool) and tuple (standalone CLI)
+    if isinstance(point, tuple):
+        # Standalone CLI mode: point is already (x, y)
+        x, y = point
+    else:
+        # ArcGIS tool mode: extract from feature
+        x, y = get_point(point)
+    
     # Make a point geometry in the same spatial ref as the parks layer
     sr = arcpy.Describe(parks).spatialReference
     pt_geom = arcpy.PointGeometry(arcpy.Point(x, y), sr)
@@ -32,7 +66,14 @@ def get_parks(point, radius):
 
     # Select parks that intersect the buffer
     parks_lyr = "parks_lyr"
-    arcpy.management.MakeFeatureLayer(parks, parks_lyr)
+    
+    # Apply definition query when using web layer URL (standalone CLI mode)
+    if isinstance(parks, str) and parks.startswith("http"):
+        arcpy.management.MakeFeatureLayer(parks, parks_lyr, DEFAULT_DEFINITION_QUERY)
+    else:
+        # ArcGIS tool mode - layer may already have definition query applied
+        arcpy.management.MakeFeatureLayer(parks, parks_lyr)
+    
     arcpy.management.SelectLayerByLocation(
         in_layer=parks_lyr,
         overlap_type="INTERSECT",
