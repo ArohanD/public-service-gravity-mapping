@@ -74,18 +74,42 @@ def get_parks(point, radius, parks=DEFAULT_WEB_LAYER, out_fc=DEFAULT_OUT_FC):
     
     return out_fc
 
-def get_parks_gdf(point: Point, radius: float, parks: str = DEFAULT_WEB_LAYER) -> gpd.GeoDataFrame:
-    """Get parks within a radius of a point. Returns a GeoDataFrame of parks that intersect the buffer."""
+def get_parks_gdf(point: Point, radius: float, parks: str = DEFAULT_WEB_LAYER, point_crs: str = "EPSG:3857") -> gpd.GeoDataFrame:
+    """Get parks within a radius of a point.
     
-    # For ArcGIS REST, add query params to URL
-    query_url = f"{parks}/query?where={quote(DEFAULT_DEFINITION_QUERY)}&outFields=*&f=geojson"
-    gdf = gpd.read_file(query_url)
+    Args:
+        point: Shapely Point geometry
+        radius: Buffer radius in meters
+        parks: URL to parks feature service
+        point_crs: CRS of the input point (default: EPSG:3857)
+    """
     
-    # Create buffer around point (assumes point is in same CRS as parks)
-    buffer = point.buffer(radius)
+    # Convert point to WGS84
+    point_wgs84 = gpd.GeoSeries([point], crs=point_crs).to_crs("EPSG:4326")[0]
     
-    # Filter to parks that intersect the buffer
-    parks_in_radius = gdf[gdf.intersects(buffer)]
+    # Convert radius from meters to approximate degrees (~111km per degree)
+    degree_radius = radius / 111000
+    
+    # Build bbox in degrees for server-side filter
+    bbox = point_wgs84.buffer(degree_radius * 2).bounds
+    
+    # Server query (everything in WGS84)
+    query_url = (
+        f"{parks}/query?where={quote(DEFAULT_DEFINITION_QUERY)}"
+        f"&geometry={bbox[0]},{bbox[1]},{bbox[2]},{bbox[3]}"
+        f"&geometryType=esriGeometryEnvelope&inSR=4326"
+        f"&spatialRel=esriSpatialRelIntersects"
+        f"&outFields=*&f=geojson"
+    )
+    
+    gdf = gpd.read_file(query_url)  # Already in WGS84
+    
+    if len(gdf) == 0:
+        print("No parks found in query area")
+        return gdf
+    
+    # Filter with degree-based buffer
+    parks_in_radius = gdf[gdf.intersects(point_wgs84.buffer(degree_radius))]
     
     print(f"Found {len(parks_in_radius)} park polygons.")
     
