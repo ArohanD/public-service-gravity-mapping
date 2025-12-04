@@ -3,7 +3,10 @@
 
 import arcpy
 import sys
+from urllib.parse import quote
 from get_point import get_point
+from shapely import Point
+import geopandas as gpd
 
 arcpy.env.overwriteOutput = True
 
@@ -30,16 +33,29 @@ def parse_cli_args():
     return (x, y), radius, parks, out_fc
 
 
-def get_parks(point, radius, parks, out_fc):
+def get_parks(point, radius, parks=DEFAULT_WEB_LAYER, out_fc=DEFAULT_OUT_FC):
     """Get parks within a radius of a point. Returns a feature class of parks that intersect the buffer."""
+
 
     running_in_arc = not isinstance(point, tuple)
     
+    # Clean up existing layers
+    if arcpy.Exists("parks_lyr"):
+        arcpy.management.Delete("parks_lyr")
+    if arcpy.Exists("in_memory\\click_buffer"):
+        arcpy.management.Delete("in_memory\\click_buffer")
+    
     # Extract coordinates from point (handle both feature and tuple)
     x, y = get_point(point) if running_in_arc else point
+    arcpy.AddMessage(f"Getting parks within a radius of {radius} meters from point: {x}, {y}")
     
-    # Create point geometry and buffer
-    sr = arcpy.Describe(parks).spatialReference
+    # Get spatial reference from the INPUT point (not parks layer) to avoid CRS mismatch
+    if running_in_arc:
+        sr = arcpy.Describe(point).spatialReference
+    else:
+        sr = arcpy.Describe(parks).spatialReference
+    
+    # Create point geometry and buffer in the point's CRS
     pt_geom = arcpy.PointGeometry(arcpy.Point(x, y), sr)
     buffer_fc = "in_memory\\click_buffer"
     arcpy.analysis.Buffer(pt_geom, buffer_fc, f"{radius} Meters")
@@ -58,18 +74,45 @@ def get_parks(point, radius, parks, out_fc):
     
     return out_fc
 
+def get_parks_gdf(point: Point, radius: float, parks: str = DEFAULT_WEB_LAYER) -> gpd.GeoDataFrame:
+    """Get parks within a radius of a point. Returns a GeoDataFrame of parks that intersect the buffer."""
+    
+    # For ArcGIS REST, add query params to URL
+    query_url = f"{parks}/query?where={quote(DEFAULT_DEFINITION_QUERY)}&outFields=*&f=geojson"
+    gdf = gpd.read_file(query_url)
+    
+    # Create buffer around point (assumes point is in same CRS as parks)
+    buffer = point.buffer(radius)
+    
+    # Filter to parks that intersect the buffer
+    parks_in_radius = gdf[gdf.intersects(buffer)]
+    
+    print(f"Found {len(parks_in_radius)} park polygons.")
+    
+    return parks_in_radius
 
-# Main execution
-point_param = arcpy.GetParameter(0)
+if __name__ == "__main__":
+    # Try to get ArcGIS tool parameters
+    point_param = arcpy.GetParameter(0)
+    
+    # Check if point_param is a valid ArcGIS feature set (not None and has features)
+    try:
+        if point_param is not None:
+            # Try to count features - if this works, we're in ArcGIS mode
+            count = int(arcpy.management.GetCount(point_param)[0])
+            if count > 0:
+                # Running as ArcGIS tool with valid point
+                point = point_param
+                radius = arcpy.GetParameter(1)
+                parks = arcpy.GetParameter(2)
+                out_fc = arcpy.GetParameterAsText(3)
+                arcpy.AddMessage(f"Running as ArcGIS tool with point: {point}, radius: {radius}, parks: {parks}, out_fc: {out_fc}")
+            else:
+                raise ValueError("No features in point parameter")
+        else:
+            raise ValueError("No point parameter")
+    except Exception:
+        # Running as standalone CLI
+        point, radius, parks, out_fc = parse_cli_args()
 
-if point_param is not None:
-    # Running as ArcGIS tool
-    point = point_param
-    radius = arcpy.GetParameter(1)
-    parks = arcpy.GetParameter(2)
-    out_fc = arcpy.GetParameterAsText(3)
-else:
-    # Running as standalone CLI
-    point, radius, parks, out_fc = parse_cli_args()
-
-get_parks(point, radius, parks, out_fc)
+    get_parks(point, radius, parks, out_fc)

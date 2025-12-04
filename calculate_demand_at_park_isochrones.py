@@ -1,10 +1,8 @@
 import arcpy
 import rasterio
 import os
-from rasterio.mask import mask
 import numpy as np
 from shapely import Polygon, wkt
-from shapely.ops import transform
 import pyproj
 
 from arc_utils import update_map

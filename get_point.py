@@ -14,7 +14,8 @@ def get_point(feat):
     m = aprx.activeMap
     try:
         m.removeLayer(feat)
-    except:
+    except Exception as e:
+        print(f"Error removing layer: {e}")
         # If 'feat' is a pure Feature Set and not a layer, removeLayer will fail – that's OK.
         pass
 

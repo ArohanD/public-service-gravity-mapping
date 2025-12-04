@@ -5,7 +5,7 @@ import urllib.parse
 
 from config import MAPBOX_TOKEN
 
-def fetch_isochrone(lon, lat, token):
+def fetch_isochrone(lon, lat, token=MAPBOX_TOKEN):
     """
     Fetch an isochrone from the Mapbox API for a given longitude and latitude.
     Returns a JSON object containing the isochrone polygons, or None on error.
@@ -40,8 +40,6 @@ out_fc = arcpy.GetParameterAsText(2)       # Output feature class
 # Defaults for standalone execution
 if not parks_layer:
     parks_layer = r"..\Data\samples\OSM_NA_Leisure_GetParks_50.shp"
-if not token:
-    token = MAPBOX_TOKEN
 
 wgs84 = arcpy.SpatialReference(4326)
 iso_geoms = []
@@ -73,7 +71,7 @@ with arcpy.da.SearchCursor(parks_layer, ["SHAPE@"]) as cursor:
         lon, lat = get_centroid_lonlat(park_geom, wgs84)
         arcpy.AddMessage(f"Park centroid: lon={lon}, lat={lat}")
 
-        iso_data = fetch_isochrone(lon, lat, token)
+        iso_data = fetch_isochrone(lon, lat)
         
         if iso_data is None:
             continue
