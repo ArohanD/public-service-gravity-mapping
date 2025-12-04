@@ -10,7 +10,7 @@ import pyproj
 import sys
 from shapely import Polygon
 from arc_utils import load_first_polygon_from_shapefile
-from utils import get_raster_clip_under_polygon
+from utils.utils import get_raster_clip_under_polygon
 
 # Enable GDAL memory datasets (required for rasterio.mask in newer GDAL versions)
 os.environ['GDAL_MEM_ENABLE_OPEN'] = 'YES'

@@ -5,8 +5,8 @@ import numpy as np
 from shapely import Polygon, wkt
 import pyproj
 
-from arc_utils import update_map
-from utils import get_raster_clip_under_polygon
+from utils.arc_utils import update_map
+from utils.utils import get_raster_clip_under_polygon
 
 # Enable GDAL memory datasets (required for rasterio.mask in newer GDAL versions)
 os.environ["GDAL_MEM_ENABLE_OPEN"] = "YES"

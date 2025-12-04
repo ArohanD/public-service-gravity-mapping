@@ -2,7 +2,7 @@
 #
 
 
-from shapely import Polygon, Point
+from shapely import Polygon
 from shapely.geometry import shape
 from get_isochrones import fetch_isochrone
 from get_parks import get_parks_gdf_via_arc
@@ -30,6 +30,8 @@ def append_isochrones_to_parks_gdf(parks_gdf: gpd.GeoDataFrame) -> gpd.GeoDataFr
     
     parks_gdf["isochrone_polygon"] = gpd.GeoSeries(isochrones, crs=parks_wgs84.crs)
     return parks_gdf
+
+
 
 def demand_analysis(development_polygon: Polygon, population_change: float) -> float:
 
