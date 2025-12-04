@@ -46,7 +46,7 @@ def calculate_demand_for_polygon(polygon: Polygon, raster: rasterio.DatasetReade
         transformer: pyproj Transformer to reproject polygon to raster CRS
     """
     try:
-        raster_array, valid_mask = get_raster_clip_under_polygon(polygon, raster, transformer, all_touched=True)
+        raster_array, valid_mask, _ = get_raster_clip_under_polygon(polygon, raster, transformer, all_touched=True)
         demand = float(np.sum(raster_array[valid_mask]))
         return demand
 

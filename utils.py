@@ -1,4 +1,5 @@
 import rasterio
+from rasterio import Affine
 import numpy as np
 from shapely import Polygon
 from shapely.ops import transform
@@ -9,7 +10,7 @@ def get_raster_clip_under_polygon(
     raster: rasterio.DatasetReader, 
     transformer=None,
     all_touched: bool = True
-) -> tuple[np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, Affine]:
     """
     Clip a raster to a polygon and return the clipped array with a valid data mask.
     
@@ -20,17 +21,20 @@ def get_raster_clip_under_polygon(
         all_touched: If True, include all pixels touched by polygon
         
     Returns:
-        Tuple of (clipped_array, valid_mask) where valid_mask indicates non-nodata pixels
+        Tuple of (clipped_array, valid_mask, transform) where:
+        - clipped_array: The clipped raster data
+        - valid_mask: Boolean mask indicating non-nodata pixels
+        - transform: Affine transform for the clipped raster
     """
     # Reproject polygon if transformer provided
     if transformer:
         polygon = transform(transformer.transform, polygon)
     
-    out_image, _out_transform = mask(
+    out_image, out_transform = mask(
         raster, [polygon], crop=True, all_touched=all_touched
     )
     
     raster_array = out_image[0]
     valid_mask = raster_array != raster.nodata
     
-    return raster_array, valid_mask
+    return raster_array, valid_mask, out_transform
