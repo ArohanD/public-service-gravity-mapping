@@ -5,12 +5,13 @@ import urllib.parse
 
 from config import MAPBOX_TOKEN
 
-def fetch_isochrone(lon, lat, token=MAPBOX_TOKEN) -> dict:
+def fetch_isochrone(lon, lat, mode="driving-traffic", token=MAPBOX_TOKEN) -> dict:
     """
     Fetch an isochrone from the Mapbox API for a given longitude and latitude.
     Returns a JSON object containing the isochrone polygons, or None on error.
     """
-    base_url = "https://api.mapbox.com/isochrone/v1/mapbox/driving-traffic"
+    mode = "walking" # reducing range for now to reduce API calls TODO: add back in driving-traffic
+    base_url = f"https://api.mapbox.com/isochrone/v1/mapbox/{mode}"
     coords = f"{lon},{lat}"
 
     params = {
@@ -21,7 +22,6 @@ def fetch_isochrone(lon, lat, token=MAPBOX_TOKEN) -> dict:
     }
 
     url = f"{base_url}/{coords}?{urllib.parse.urlencode(params)}"
-    arcpy.AddMessage(f"Requesting isochrone: {url}")
 
     try:
         with urllib.request.urlopen(url) as response:

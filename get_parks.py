@@ -104,6 +104,10 @@ def get_parks_gdf_via_arc(point: Point, radius: float, parks: str = DEFAULT_WEB_
     # Create parks layer with definition query
     arcpy.management.MakeFeatureLayer(parks, "parks_lyr", DEFAULT_DEFINITION_QUERY)
     
+    # Get the parks layer's CRS (geometries will be in this CRS)
+    parks_sr = arcpy.Describe("parks_lyr").spatialReference
+    parks_epsg = parks_sr.factoryCode
+    
     # Select parks that intersect buffer
     arcpy.management.SelectLayerByLocation("parks_lyr", "INTERSECT", buffer_fc)
     
@@ -128,8 +132,8 @@ def get_parks_gdf_via_arc(point: Point, radius: float, parks: str = DEFAULT_WEB_
             geometries.append(geom)
             attributes.append(dict(zip(fields, row[1:])))
     
-    # Create GeoDataFrame
-    gdf = gpd.GeoDataFrame(attributes, geometry=geometries, crs=f"EPSG:{epsg_code}")
+    # Create GeoDataFrame with the parks layer's CRS (not the input point's CRS)
+    gdf = gpd.GeoDataFrame(attributes, geometry=geometries, crs=f"EPSG:{parks_epsg}")
     
     return gdf
 
