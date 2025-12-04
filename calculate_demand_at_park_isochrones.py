@@ -7,6 +7,9 @@ from shapely import Polygon, wkt
 from shapely.ops import transform
 import pyproj
 
+from arc_utils import update_map
+from utils import get_raster_clip_under_polygon
+
 # Enable GDAL memory datasets (required for rasterio.mask in newer GDAL versions)
 os.environ["GDAL_MEM_ENABLE_OPEN"] = "YES"
 
@@ -16,9 +19,6 @@ ghs_raster = arcpy.GetParameterAsText(1)
 out_fc = arcpy.GetParameterAsText(2)
 
 arcpy.env.overwriteOutput = True
-
-# Spatiial Analyst needed for zonal statistics
-arcpy.CheckOutExtension("Spatial")
 
 # Default params for standalone execution
 DEFAULT_ISCHRONE_LAYER = r"..\Data\samples\park_isochrones_1000.shp"  # TODO: Change this to the actual isochrone layer
@@ -46,16 +46,7 @@ def calculate_demand_for_polygon(polygon: Polygon, raster: rasterio.DatasetReade
         transformer: pyproj Transformer to reproject polygon to raster CRS
     """
     try:
-        # Reproject polygon from source CRS to raster CRS
-        reprojected_polygon = transform(transformer.transform, polygon)
-        
-        out_image, _out_transform = mask(
-            raster, [reprojected_polygon], crop=True, all_touched=True
-        )
-
-        # Sum all pixel values in the masked array
-        raster_array = out_image[0]
-        valid_mask = raster_array != raster.nodata
+        raster_array, valid_mask = get_raster_clip_under_polygon(polygon, raster, transformer, all_touched=True)
         demand = float(np.sum(raster_array[valid_mask]))
         return demand
 
@@ -95,6 +86,7 @@ def calculate_demand(isochrones, raster_path, out_fc):
             always_xy=True
         )
         
+        # Keep track for progress updates
         processed_count = 0
 
         with arcpy.da.UpdateCursor(out_fc, ["SHAPE@", DEMAND_FIELD_NAME]) as cursor:
@@ -114,18 +106,6 @@ def calculate_demand(isochrones, raster_path, out_fc):
 
     update_map(out_fc)
     return out_fc
-
-
-def update_map(out_fc):
-    """Update the map with the new demand feature class."""
-    try:
-        aprx = arcpy.mp.ArcGISProject("CURRENT")
-        m = aprx.activeMap
-        m.addDataFromPath(out_fc)
-        arcpy.AddMessage("Updated map with new demand feature class.")
-    except Exception as e:
-        arcpy.AddError(f"Error updating map: {e}")
-        pass
 
 
 if not isochrones_layer:
