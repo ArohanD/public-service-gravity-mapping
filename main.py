@@ -4,6 +4,8 @@
 import os
 import arcpy
 
+from utils.html import generate_park_report
+
 # Enable GDAL memory datasets (required for rasterio.mask in newer GDAL versions)
 os.environ["GDAL_MEM_ENABLE_OPEN"] = "YES"
 
@@ -251,12 +253,24 @@ def demand_analysis(developments_gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
         parks_gdf = append_demand_metrics(parks_gdf, projected_raster, "projected")
 
     # Calculate change from current to projected (positive = increase)
+    # Raw change stats
     parks_gdf["pop_change"] = parks_gdf["projected_pop"] - parks_gdf["current_pop"]
     parks_gdf["m2_per_person_change"] = (
         parks_gdf["projected_m2_per_person"] - parks_gdf["current_m2_per_person"]
     )
     parks_gdf["acres_per_1000_change"] = (
         parks_gdf["projected_acres_per_1000"] - parks_gdf["current_acres_per_1000"]
+    )
+
+    # Weighted change stats (distance-decay weighted)
+    parks_gdf["pop_weighted_change"] = (
+        parks_gdf["projected_pop_weighted"] - parks_gdf["current_pop_weighted"]
+    )
+    parks_gdf["m2_per_person_weighted_change"] = (
+        parks_gdf["projected_m2_per_person_weighted"] - parks_gdf["current_m2_per_person_weighted"]
+    )
+    parks_gdf["acres_per_1000_weighted_change"] = (
+        parks_gdf["projected_acres_per_1000_weighted"] - parks_gdf["current_acres_per_1000_weighted"]
     )
 
     # Percent change (useful for comparing across different sized parks)
@@ -266,6 +280,14 @@ def demand_analysis(developments_gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
     parks_gdf["acres_per_1000_pct_change"] = (
         parks_gdf["acres_per_1000_change"] / parks_gdf["current_acres_per_1000"]
     ) * 100
+    
+    # Weighted percent change
+    parks_gdf["pop_weighted_pct_change"] = (
+        parks_gdf["pop_weighted_change"] / parks_gdf["current_pop_weighted"]
+    ) * 100
+    parks_gdf["acres_per_1000_weighted_pct_change"] = (
+        parks_gdf["acres_per_1000_weighted_change"] / parks_gdf["current_acres_per_1000_weighted"]
+    ) * 100
 
     return parks_gdf
 
@@ -274,7 +296,7 @@ def demand_analysis(developments_gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
 developments_gdf = gpd.GeoDataFrame(
     {
         "geometry": [development_polygon_one, development_polygon_two],
-        "population_change": [5713.0, 4205.0],
+        "population_change": [500.0, 1000.0],
     },
     crs="EPSG:4326",
 )
@@ -282,6 +304,8 @@ developments_gdf = gpd.GeoDataFrame(
 # Run the analysis
 arcpy.AddMessage("Starting demand analysis...")
 parks_gdf = demand_analysis(developments_gdf)
+
+generate_park_report(parks_gdf)
 
 # Add results to map
 arcpy.AddMessage(f"Analysis complete. Adding {len(parks_gdf)} parks to map...")
@@ -292,7 +316,7 @@ output_shp = r"C:\gispy\scratch\parks_demand_analysis.shp"
 fc_path = gdf_to_featureclass(parks_gdf, output_path=output_shp)
 arcpy.AddMessage(f"Saved to: {fc_path}")
 
-# Add to map
+# Add to map (only works when running inside ArcGIS Pro)
 try:
     aprx = arcpy.mp.ArcGISProject("CURRENT")
     m = aprx.activeMap
@@ -302,5 +326,7 @@ try:
         arcpy.AddMessage("Layer added!")
     else:
         arcpy.AddWarning("No active map found")
-except Exception as e:
-    arcpy.AddError(f"Error adding to map: {e}")
+except Exception:
+    # "CURRENT" error means we're running from command line, not ArcGIS Pro
+    print(f"Note: Not running in ArcGIS Pro - shapefile saved to: {fc_path}")
+    print("You can manually add this shapefile to your map.")
