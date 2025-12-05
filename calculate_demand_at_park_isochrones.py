@@ -34,17 +34,21 @@ def add_demand_field(fc, field_name):
     arcpy.AddMessage(f"Added field: {field_name}")
 
 
-def calculate_demand_for_polygon(polygon: Polygon, raster: rasterio.DatasetReader, transformer):
+def calculate_demand_for_polygon(
+    polygon: Polygon, raster: rasterio.DatasetReader, transformer
+):
     """
     Calculate demand for a polygon by summing the population within the polygon from the raster.
-    
+
     Args:
         polygon: Shapely polygon geometry
         raster: Open rasterio dataset
         transformer: pyproj Transformer to reproject polygon to raster CRS
     """
     try:
-        raster_array, valid_mask, _ = get_raster_clip_under_polygon(polygon, raster, transformer, all_touched=True)
+        raster_array, valid_mask, _ = get_raster_clip_under_polygon(
+            polygon, raster, transformer, all_touched=True
+        )
         demand = float(np.sum(raster_array[valid_mask]))
         return demand
 
@@ -70,20 +74,22 @@ def calculate_demand(isochrones, raster_path, out_fc):
     # Get source CRS from isochrones
     desc = arcpy.Describe(out_fc)
     source_crs = desc.spatialReference
-    arcpy.AddMessage(f"Isochrones CRS: {source_crs.name} (WKID: {source_crs.factoryCode})")
+    arcpy.AddMessage(
+        f"Isochrones CRS: {source_crs.name} (WKID: {source_crs.factoryCode})"
+    )
 
     with rasterio.open(raster_path) as src:
         raster_crs = src.crs
         arcpy.AddMessage(f"Raster CRS: {raster_crs}")
         arcpy.AddMessage(f"Raster bounds: {src.bounds}")
-        
+
         # Create transformer from isochrones CRS to raster CRS
         transformer = pyproj.Transformer.from_crs(
             f"EPSG:{source_crs.factoryCode}",  # Source CRS from isochrones
             raster_crs.to_string(),  # Target CRS from raster
-            always_xy=True
+            always_xy=True,
         )
-        
+
         # Keep track for progress updates
         processed_count = 0
 

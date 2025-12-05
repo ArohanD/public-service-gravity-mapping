@@ -11,7 +11,7 @@ from utils.arc_utils import load_first_polygon_from_shapefile
 from utils.utils import distribute_population_stats
 
 # Enable GDAL memory datasets (required for rasterio.mask in newer GDAL versions)
-os.environ['GDAL_MEM_ENABLE_OPEN'] = 'YES'
+os.environ["GDAL_MEM_ENABLE_OPEN"] = "YES"
 arcpy.env.overwriteOutput = True
 
 DEFAULT_INPUT_POLYGON = r"..\Data\samples\developmentPolygon.shp"  # TODO: Change this to the actual single polygon layer
@@ -33,17 +33,19 @@ if __name__ == "__main__":
         transformer = pyproj.Transformer.from_crs(
             f"EPSG:{polygon_crs}",  # Source CRS from input polygon
             raster_crs.to_string(),  # Target CRS from raster
-            always_xy=True
+            always_xy=True,
         )
-        population_array, out_transform = distribute_population_stats(input_polygon, population_change, src, transformer)
+        population_array, out_transform = distribute_population_stats(
+            input_polygon, population_change, src, transformer
+        )
 
         # save the output raster with correct dimensions for the clipped extent
         profile = src.profile.copy()
         profile.update(
             height=population_array.shape[0],
             width=population_array.shape[1],
-            transform=out_transform
+            transform=out_transform,
         )
-        
-        with rasterio.open(DEFAULT_OUT_RASTER, 'w', **profile) as dst:
+
+        with rasterio.open(DEFAULT_OUT_RASTER, "w", **profile) as dst:
             dst.write(population_array, 1)

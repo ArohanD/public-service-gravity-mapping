@@ -5,12 +5,13 @@ import urllib.parse
 
 from config import MAPBOX_TOKEN
 
+
 def fetch_isochrone(lon, lat, mode="driving-traffic", token=MAPBOX_TOKEN) -> dict:
     """
     Fetch an isochrone from the Mapbox API for a given longitude and latitude.
     Returns a JSON object containing the isochrone polygons, or None on error.
     """
-    mode = "walking" # reducing range for now to reduce API calls TODO: add back in driving-traffic
+    mode = "walking"  # reducing range for now to reduce API calls TODO: add back in driving-traffic
     base_url = f"https://api.mapbox.com/isochrone/v1/mapbox/{mode}"
     coords = f"{lon},{lat}"
 
@@ -18,7 +19,7 @@ def fetch_isochrone(lon, lat, mode="driving-traffic", token=MAPBOX_TOKEN) -> dic
         "contours_minutes": "10",
         "polygons": "true",
         "denoise": "1",
-        "access_token": token
+        "access_token": token,
     }
 
     url = f"{base_url}/{coords}?{urllib.parse.urlencode(params)}"
@@ -36,9 +37,9 @@ def fetch_isochrone(lon, lat, mode="driving-traffic", token=MAPBOX_TOKEN) -> dic
 
 if __name__ == "__main__":
     # Script tool params
-    parks_layer = arcpy.GetParameter(0)        # Feature Layer of parks
-    token = arcpy.GetParameterAsText(1)        # Mapbox token
-    out_fc = arcpy.GetParameterAsText(2)       # Output feature class
+    parks_layer = arcpy.GetParameter(0)  # Feature Layer of parks
+    token = arcpy.GetParameterAsText(1)  # Mapbox token
+    out_fc = arcpy.GetParameterAsText(2)  # Output feature class
 
     # Defaults for standalone execution
     if not parks_layer:
@@ -54,19 +55,18 @@ if __name__ == "__main__":
         Returns (lon, lat)
         """
         # centroid is a Point (not a PointGeometry)
-        centroid = geom.centroid    # Point
+        centroid = geom.centroid  # Point
 
         # Wrap in PointGeometry so we can project
         point_geom = arcpy.PointGeometry(
-            arcpy.Point(centroid.X, centroid.Y),
-            geom.spatialReference
+            arcpy.Point(centroid.X, centroid.Y), geom.spatialReference
         )
 
         # Project the point geometry
         centroid_wgs = point_geom.projectAs(target_sr)  # PointGeometry
 
         # Get the underlying Point and return its X/Y
-        pt = centroid_wgs.firstPoint    # Point
+        pt = centroid_wgs.firstPoint  # Point
         return pt.X, pt.Y
 
     if __name__ == "__main__":
@@ -76,7 +76,7 @@ if __name__ == "__main__":
                 arcpy.AddMessage(f"Park centroid: lon={lon}, lat={lat}")
 
                 iso_data = fetch_isochrone(lon, lat)
-                
+
                 if iso_data is None:
                     continue
 
@@ -86,10 +86,12 @@ if __name__ == "__main__":
 
         if iso_geoms:
             arcpy.AddMessage(f"Created {len(iso_geoms)} isochrone polygons total.")
-            
+
             if not out_fc:
                 # Running standalone - save to scratch
-                out_fc = r"C:\gispy\scratch\OSM_NA_Leisure_GetParks_50_getIsochrones.shp"
+                out_fc = (
+                    r"C:\gispy\scratch\OSM_NA_Leisure_GetParks_50_getIsochrones.shp"
+                )
                 arcpy.CopyFeatures_management(iso_geoms, out_fc)
                 arcpy.AddMessage(f"Saved to: {out_fc}")
             else:
@@ -100,6 +102,3 @@ if __name__ == "__main__":
                 m.addDataFromPath(out_fc)
         else:
             arcpy.AddWarning("No isochrones were created.")
-
-
-

@@ -1,5 +1,6 @@
 import arcpy
 
+
 def get_point(feat):
     with arcpy.da.SearchCursor(feat, ["SHAPE@XY"]) as cursor:
         cursor = arcpy.da.SearchCursor(feat, ["SHAPE@XY"])
