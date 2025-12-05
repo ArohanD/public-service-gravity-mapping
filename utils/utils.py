@@ -164,3 +164,138 @@ def create_memory_raster(
         # Reopen for reading and yield
         with memfile.open() as src:
             yield src
+
+def apply_distance_decay(
+    pop_array: np.ndarray,
+    transform,
+    target_x: float,
+    target_y: float,
+    decay_type: str = "gaussian",
+    sigma_km: float = 0.5
+) -> np.ndarray:
+    """
+    Weight population cells by distance to a target point.
+    
+    Args:
+        pop_array: Population values per cell
+        transform: Raster affine transform (gives cell coordinates)
+        target_x/y: Target location in raster CRS (e.g., park centroid)
+        decay_type: "none", "inverse", "inverse_square", or "gaussian"
+        sigma_km: For gaussian decay, controls spread (higher = slower decay)
+    
+    Returns:
+        Weighted population array
+    """
+    if decay_type == "none":
+        return pop_array
+    
+    rows, cols = pop_array.shape
+    
+    # Create coordinate grids for all cells
+    col_indices, row_indices = np.meshgrid(np.arange(cols), np.arange(rows))
+    
+    # Convert pixel indices to world coordinates (cell centers)
+    cell_x = transform.c + (col_indices + 0.5) * transform.a
+    cell_y = transform.f + (row_indices + 0.5) * transform.e
+    
+    # Calculate distance from each cell to target (in raster CRS units, typically meters)
+    distances = np.sqrt((cell_x - target_x)**2 + (cell_y - target_y)**2)
+    distances_km = distances / 1000
+    
+    # Apply decay function
+    if decay_type == "inverse":
+        weights = 1 / (1 + distances_km)
+    elif decay_type == "inverse_square":
+        weights = 1 / (1 + distances_km**2)
+    elif decay_type == "gaussian":
+        weights = np.exp(-distances_km**2 / (2 * sigma_km**2))
+    else:
+        weights = np.ones_like(distances)
+    
+    return pop_array * weights
+
+
+def calculate_demand_metrics_2sfca(
+    isochrone_polygon: Polygon,
+    park_geometry: Polygon,
+    raster: rasterio.DatasetReader,
+    isochrone_transformer: pyproj.Transformer,
+    park_transformer: pyproj.Transformer,
+    decay_type: str = "gaussian"
+) -> dict:
+    """
+    Calculate 2SFCA demand metrics for a park.
+    
+    Args:
+        isochrone_polygon: The catchment area (isochrone) for the park
+        park_geometry: The park polygon (for area calculation)
+        raster: Open rasterio dataset
+        isochrone_transformer: Transformer from isochrone CRS to raster CRS
+        park_transformer: Transformer from park geometry CRS to raster CRS
+        decay_type: Distance decay function type
+    
+    Returns:
+        Dictionary with multiple demand metrics
+    """
+    from shapely.ops import transform as shapely_transform
+    
+    try:
+        # Get population within isochrone
+        raster_array, valid_mask, out_transform = get_raster_clip_under_polygon(
+            isochrone_polygon, raster, isochrone_transformer, all_touched=True
+        )
+        
+        # Transform park centroid to raster CRS for distance calculations
+        # (park geometry is in different CRS than isochrone)
+        park_centroid = park_geometry.centroid
+        park_centroid_raster = shapely_transform(park_transformer.transform, park_centroid)
+        
+        # Calculate weighted population (with distance decay)
+        weighted_pop = apply_distance_decay(
+            raster_array,
+            out_transform,
+            park_centroid_raster.x,
+            park_centroid_raster.y,
+            decay_type=decay_type
+        )
+        
+        # Raw population sum (no decay)
+        pop_raw = float(np.sum(raster_array[valid_mask]))
+        
+        # Weighted population sum (with decay)
+        pop_weighted = float(np.sum(weighted_pop[valid_mask]))
+        
+        # Calculate park area in m² (transform to raster CRS which is typically in meters)
+        park_raster_crs = shapely_transform(park_transformer.transform, park_geometry)
+        park_area_m2 = park_raster_crs.area
+        
+        # 2SFCA metrics
+        # Rj = Supply / Demand
+        m2_per_person = park_area_m2 / pop_raw if pop_raw > 0 else None
+        m2_per_person_weighted = park_area_m2 / pop_weighted if pop_weighted > 0 else None
+        
+        # More readable units
+        acres_per_1000 = (park_area_m2 / 4047) / (pop_raw / 1000) if pop_raw > 0 else None
+        acres_per_1000_weighted = (park_area_m2 / 4047) / (pop_weighted / 1000) if pop_weighted > 0 else None
+        
+        return {
+            "pop": pop_raw,
+            "pop_weighted": pop_weighted,
+            "park_area_m2": park_area_m2,
+            "m2_per_person": m2_per_person,
+            "m2_per_person_weighted": m2_per_person_weighted,
+            "acres_per_1000": acres_per_1000,
+            "acres_per_1000_weighted": acres_per_1000_weighted,
+        }
+
+    except Exception as e:
+        print(f"Error calculating demand metrics: {e}")
+        return {
+            "pop": None,
+            "pop_weighted": None,
+            "park_area_m2": None,
+            "m2_per_person": None,
+            "m2_per_person_weighted": None,
+            "acres_per_1000": None,
+            "acres_per_1000_weighted": None,
+        }

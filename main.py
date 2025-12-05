@@ -1,11 +1,13 @@
 # inputs: development polygon, population raster
 #
 
+import os
+# Enable GDAL memory datasets (required for rasterio.mask in newer GDAL versions)
+os.environ['GDAL_MEM_ENABLE_OPEN'] = 'YES'
 
 import pyproj
 from shapely import Polygon
 from shapely.geometry import box, shape
-from calculate_demand_at_park_isochrones import calculate_demand_for_polygon
 from get_isochrones import fetch_isochrone
 from get_parks import get_parks_gdf_via_arc
 from constants import DEVELOPMENT_POLYGON_GEOJSON
@@ -13,8 +15,9 @@ import geopandas as gpd
 from tqdm import tqdm
 import rasterio
 import numpy as np
+from contextlib import nullcontext
 
-from utils.utils import distribute_population_stats, get_raster_clip_under_polygon, overlay_rasters, create_memory_raster
+from utils.utils import calculate_demand_metrics_2sfca, distribute_population_stats, get_raster_clip_under_polygon, overlay_rasters, create_memory_raster
 
 DEFAULT_GHS_RASTER = r"..\Data\GHS\GHS_POP_E2025_GLOBE_R2023A_54009_100_V1_0.tif"
 
@@ -38,23 +41,62 @@ def append_isochrones_to_parks_gdf(parks_gdf: gpd.GeoDataFrame) -> gpd.GeoDataFr
     return parks_gdf
 
 
-def calculate_demand_metrics(polygon: Polygon, raster: rasterio.DatasetReader, transformer: pyproj.Transformer) -> float:
-    """Calculate demand for a polygon by summing the population within the polygon from the raster."""
-    current_demand = calculate_demand_for_polygon(polygon, raster, transformer)
+def append_demand_metrics(
+    parks_gdf: gpd.GeoDataFrame, 
+    population_raster: str | rasterio.DatasetReader, 
+    demand_field_prefix: str,
+    decay_type: str = "gaussian"
+) -> gpd.GeoDataFrame:
+    """Calculate 2SFCA demand metrics for each park's isochrone.
     
-    return current_demand, None
-
-
-def append_demand_metrics(parks_gdf: gpd.GeoDataFrame, population_raster: str, demand_field_name: str) -> gpd.GeoDataFrame:
-    with rasterio.open(population_raster) as src:
-        transformer = pyproj.Transformer.from_crs(
-            parks_gdf["isochrone_polygon"].crs,  # Source CRS from input polygon
+    Args:
+        parks_gdf: GeoDataFrame with park geometries and isochrone_polygon column
+        population_raster: Either a file path string or an open rasterio DatasetReader
+        demand_field_prefix: Prefix for output columns (e.g., "current" -> "current_pop", "current_m2_per_person", etc.)
+        decay_type: Distance decay function ("none", "inverse", "inverse_square", "gaussian")
+    
+    Output columns added:
+        {prefix}_pop: Raw population sum in isochrone
+        {prefix}_pop_weighted: Distance-weighted population sum
+        {prefix}_park_area_m2: Park area in square meters
+        {prefix}_m2_per_person: Square meters of park per person (2SFCA ratio)
+        {prefix}_m2_per_person_weighted: Same but with distance decay
+        {prefix}_acres_per_1000: Acres per 1000 people
+        {prefix}_acres_per_1000_weighted: Same but with distance decay
+    """
+    # Handle both file path and already-open raster
+    ctx = rasterio.open(population_raster) if isinstance(population_raster, str) else nullcontext(population_raster)
+    
+    with ctx as src:
+        # Transformer for isochrone polygons (WGS84 -> raster CRS)
+        isochrone_transformer = pyproj.Transformer.from_crs(
+            parks_gdf["isochrone_polygon"].crs,  # Source CRS from isochrone polygons (WGS84)
             src.crs,  # Target CRS from raster
             always_xy=True
         )
-        for _, row in tqdm(parks_gdf.iterrows(), total=len(parks_gdf), desc="Calculating demand at park isochrones"):
-            current_demand, projected_demand = calculate_demand_metrics(row["isochrone_polygon"], src, transformer)
-            parks_gdf.at[row.name, demand_field_name] = current_demand
+        
+        # Transformer for park geometries (Web Mercator -> raster CRS)
+        park_transformer = pyproj.Transformer.from_crs(
+            parks_gdf.crs,  # Source CRS from park geometries (typically Web Mercator)
+            src.crs,  # Target CRS from raster
+            always_xy=True
+        )
+        
+        for idx, row in tqdm(parks_gdf.iterrows(), total=len(parks_gdf), desc=f"Calculating {demand_field_prefix} demand metrics"):
+            metrics = calculate_demand_metrics_2sfca(
+                isochrone_polygon=row["isochrone_polygon"],
+                park_geometry=row["geometry"],
+                raster=src,
+                isochrone_transformer=isochrone_transformer,
+                park_transformer=park_transformer,
+                decay_type=decay_type
+            )
+            
+            # Add each metric as a column with the prefix
+            for metric_name, value in metrics.items():
+                col_name = f"{demand_field_prefix}_{metric_name}"
+                parks_gdf.at[idx, col_name] = value
+    
     return parks_gdf
 
 def demand_analysis(development_polygon: Polygon, population_change: float) -> float:
@@ -74,7 +116,7 @@ def demand_analysis(development_polygon: Polygon, population_change: float) -> f
         point_crs="EPSG:4326"        # Tell it the point is in WGS84
     )
     parks_gdf = append_isochrones_to_parks_gdf(parks_gdf)
-    parks_gdf = append_demand_metrics(parks_gdf, DEFAULT_GHS_RASTER, "current_demand")
+    parks_gdf = append_demand_metrics(parks_gdf, DEFAULT_GHS_RASTER, "current")
 
     # Set up the new demand raster
     # clip the population raster to the bounds of all our isochrones
@@ -117,8 +159,6 @@ def demand_analysis(development_polygon: Polygon, population_change: float) -> f
 
     # Calculate projected demand using in-memory raster
     with create_memory_raster(projected_population_array, population_transform, raster_crs, raster_nodata) as projected_raster:
-        for _, row in tqdm(parks_gdf.iterrows(), total=len(parks_gdf), desc="Calculating projected demand"):
-            demand, _ = calculate_demand_metrics(row["isochrone_polygon"], projected_raster, transformer)
-            parks_gdf.at[row.name, "projected_demand"] = demand
+        parks_gdf = append_demand_metrics(parks_gdf, projected_raster, "projected")
 
 demand_analysis(development_polygon, 5713)
