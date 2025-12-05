@@ -10,8 +10,7 @@ os.environ["GDAL_MEM_ENABLE_OPEN"] = "YES"
 import pyproj
 from shapely import Polygon
 from shapely.geometry import box, shape
-from get_isochrones import fetch_isochrone
-from get_parks import get_parks_gdf_via_arc
+from utils.api import fetch_isochrone, get_parks_gdf_via_arc
 from constants import DEVELOPMENT_POLYGONS_GEOJSON
 import geopandas as gpd
 from tqdm import tqdm
