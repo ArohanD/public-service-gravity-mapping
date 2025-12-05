@@ -1,42 +1,7 @@
 import arcpy
-from shapely import Polygon, wkt
 import os
 import tempfile
 import geopandas as gpd
-
-
-def get_point(feat):
-    with arcpy.da.SearchCursor(feat, ["SHAPE@XY"]) as cursor:
-        cursor = arcpy.da.SearchCursor(feat, ["SHAPE@XY"])
-        row = next(cursor)
-        x, y = row[0]
-
-    # clear features so the layer is empty next time
-    arcpy.management.DeleteRows(feat)
-
-    # try to remove the layer from the active map
-    aprx = arcpy.mp.ArcGISProject("CURRENT")
-    m = aprx.activeMap
-    try:
-        m.removeLayer(feat)
-    except Exception as e:
-        print(f"Error removing layer: {e}")
-        # If 'feat' is a pure Feature Set and not a layer, removeLayer will fail – that's OK.
-        pass
-
-    return x, y
-
-
-def update_map(out_fc):
-    """Update the map with the new demand feature class."""
-    try:
-        aprx = arcpy.mp.ArcGISProject("CURRENT")
-        m = aprx.activeMap
-        m.addDataFromPath(out_fc)
-        arcpy.AddMessage("Updated map with new demand feature class.")
-    except Exception as e:
-        arcpy.AddError(f"Error updating map: {e}")
-        pass
 
 
 def gdf_to_featureclass(gdf, output_path: str = None, layer_name: str = "gdf_layer"):
@@ -98,50 +63,3 @@ def gdf_to_featureclass(gdf, output_path: str = None, layer_name: str = "gdf_lay
             os.remove(tmp_path)
 
     return output_path
-
-
-def add_gdf_to_map(gdf, layer_name: str = "Analysis Results"):
-    """
-    Convert a GeoDataFrame to a feature class and add it to the current ArcGIS Pro map.
-
-    Args:
-        gdf: GeoDataFrame to add
-        layer_name: Name for the layer in the map
-
-    Returns:
-        Path to the created feature class
-    """
-    arcpy.AddMessage(
-        f"Converting GeoDataFrame with {len(gdf)} features to feature class..."
-    )
-
-    # Create in-memory feature class
-    fc_path = gdf_to_featureclass(gdf, layer_name=layer_name.replace(" ", "_"))
-
-    # Add to current map
-    try:
-        aprx = arcpy.mp.ArcGISProject("CURRENT")
-        m = aprx.activeMap
-        if m is None:
-            arcpy.AddWarning(
-                "No active map found. Feature class created but not added to map."
-            )
-        else:
-            m.addDataFromPath(fc_path)
-            arcpy.AddMessage(f"Added '{layer_name}' to map: {m.name}")
-    except Exception as e:
-        arcpy.AddWarning(f"Could not add to map: {e}")
-        arcpy.AddMessage(f"Feature class saved to: {fc_path}")
-
-    return fc_path
-
-
-def load_first_polygon_from_shapefile(shapefile: str) -> Polygon:
-    """Load the first polygon from a shapefile into a polygon."""
-    with arcpy.da.SearchCursor(shapefile, ["SHAPE@WKT"]) as cursor:
-        row = next(cursor)
-        polygon = wkt.loads(row[0])
-    # verify that the polygon is valid using shapely
-    if not polygon.is_valid:
-        raise ValueError("Invalid polygon provided")
-    return polygon
