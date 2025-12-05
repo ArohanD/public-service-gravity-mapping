@@ -250,6 +250,23 @@ def demand_analysis(developments_gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
     ) as projected_raster:
         parks_gdf = append_demand_metrics(parks_gdf, projected_raster, "projected")
 
+    # Calculate change from current to projected (positive = increase)
+    parks_gdf["pop_change"] = parks_gdf["projected_pop"] - parks_gdf["current_pop"]
+    parks_gdf["m2_per_person_change"] = (
+        parks_gdf["projected_m2_per_person"] - parks_gdf["current_m2_per_person"]
+    )
+    parks_gdf["acres_per_1000_change"] = (
+        parks_gdf["projected_acres_per_1000"] - parks_gdf["current_acres_per_1000"]
+    )
+
+    # Percent change (useful for comparing across different sized parks)
+    parks_gdf["pop_pct_change"] = (
+        parks_gdf["pop_change"] / parks_gdf["current_pop"]
+    ) * 100
+    parks_gdf["acres_per_1000_pct_change"] = (
+        parks_gdf["acres_per_1000_change"] / parks_gdf["current_acres_per_1000"]
+    ) * 100
+
     return parks_gdf
 
 
