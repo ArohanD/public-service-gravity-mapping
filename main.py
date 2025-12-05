@@ -16,7 +16,6 @@ from constants import DEVELOPMENT_POLYGONS_GEOJSON
 import geopandas as gpd
 from tqdm import tqdm
 import numpy as np
-from contextlib import nullcontext
 from utils.arc_utils import gdf_to_featureclass
 from utils.utils import overlay_rasters, create_memory_raster
 from classes.PopulationRaster import PopulationRaster
@@ -56,7 +55,7 @@ def append_isochrones_to_parks_gdf(parks_gdf: gpd.GeoDataFrame) -> gpd.GeoDataFr
 
 def append_demand_metrics(
     parks_gdf: gpd.GeoDataFrame,
-    population_raster: str | PopulationRaster,
+    pop_raster: PopulationRaster,
     demand_field_prefix: str,
     decay_type: str = "gaussian",
 ) -> gpd.GeoDataFrame:
@@ -64,7 +63,7 @@ def append_demand_metrics(
 
     Args:
         parks_gdf: GeoDataFrame with park geometries and isochrone_polygon column
-        population_raster: Either a file path string or a PopulationRaster instance
+        pop_raster: PopulationRaster instance to calculate demand from
         demand_field_prefix: Prefix for output columns (e.g., "current" -> "current_pop", etc.)
         decay_type: Distance decay function ("none", "inverse", "inverse_square", "gaussian")
 
@@ -77,37 +76,68 @@ def append_demand_metrics(
         {prefix}_acres_per_1000: Acres per 1000 people
         {prefix}_acres_per_1000_weighted: Same but with distance decay
     """
-    # Handle both file path and PopulationRaster instance
-    ctx = (
-        PopulationRaster(population_raster)
-        if isinstance(population_raster, str)
-        else nullcontext(population_raster)
-    )
-
     isochrone_crs = parks_gdf["isochrone_polygon"].crs
     park_crs = parks_gdf.crs
 
-    with ctx as pop_raster:
-        for idx, row in tqdm(
-            parks_gdf.iterrows(),
-            total=len(parks_gdf),
-            desc=f"Calculating {demand_field_prefix} demand metrics",
-        ):
-            metrics = pop_raster.calculate_demand_metrics(
-                isochrone_polygon=row["isochrone_polygon"],
-                park_geometry=row["geometry"],
-                isochrone_crs=isochrone_crs,
-                park_crs=park_crs,
-                decay_type=decay_type,
-            )
+    for idx, row in tqdm(
+        parks_gdf.iterrows(),
+        total=len(parks_gdf),
+        desc=f"Calculating {demand_field_prefix} demand metrics",
+    ):
+        metrics = pop_raster.calculate_demand_metrics(
+            isochrone_polygon=row["isochrone_polygon"],
+            park_geometry=row["geometry"],
+            isochrone_crs=isochrone_crs,
+            park_crs=park_crs,
+            decay_type=decay_type,
+        )
 
-            # Add each metric as a column with the prefix
-            for metric_name, value in metrics.items():
-                col_name = f"{demand_field_prefix}_{metric_name}"
-                parks_gdf.at[idx, col_name] = value
+        # Add each metric as a column with the prefix
+        for metric_name, value in metrics.items():
+            col_name = f"{demand_field_prefix}_{metric_name}"
+            parks_gdf.at[idx, col_name] = value
 
     return parks_gdf
 
+def append_delta_metrics(parks_gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+    # Calculate change from current to projected (positive = increase)
+    # Raw change stats
+    parks_gdf["pop_change"] = parks_gdf["projected_pop"] - parks_gdf["current_pop"]
+    parks_gdf["m2_per_person_change"] = (
+        parks_gdf["projected_m2_per_person"] - parks_gdf["current_m2_per_person"]
+    )
+    parks_gdf["acres_per_1000_change"] = (
+        parks_gdf["projected_acres_per_1000"] - parks_gdf["current_acres_per_1000"]
+    )
+
+    # Weighted change stats (distance-decay weighted)
+    parks_gdf["pop_weighted_change"] = (
+        parks_gdf["projected_pop_weighted"] - parks_gdf["current_pop_weighted"]
+    )
+    parks_gdf["m2_per_person_weighted_change"] = (
+        parks_gdf["projected_m2_per_person_weighted"] - parks_gdf["current_m2_per_person_weighted"]
+    )
+    parks_gdf["acres_per_1000_weighted_change"] = (
+        parks_gdf["projected_acres_per_1000_weighted"] - parks_gdf["current_acres_per_1000_weighted"]
+    )
+
+    # Percent change (useful for comparing across different sized parks)
+    parks_gdf["pop_pct_change"] = (
+        parks_gdf["pop_change"] / parks_gdf["current_pop"]
+    ) * 100
+    parks_gdf["acres_per_1000_pct_change"] = (
+        parks_gdf["acres_per_1000_change"] / parks_gdf["current_acres_per_1000"]
+    ) * 100
+    
+    # Weighted percent change
+    parks_gdf["pop_weighted_pct_change"] = (
+        parks_gdf["pop_weighted_change"] / parks_gdf["current_pop_weighted"]
+    ) * 100
+    parks_gdf["acres_per_1000_weighted_pct_change"] = (
+        parks_gdf["acres_per_1000_weighted_change"] / parks_gdf["current_acres_per_1000_weighted"]
+    ) * 100
+
+    return parks_gdf
 
 def demand_analysis(developments_gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
     """
@@ -178,17 +208,16 @@ def demand_analysis(developments_gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
         return parks_gdf
 
     parks_gdf = append_isochrones_to_parks_gdf(parks_gdf)
-    parks_gdf = append_demand_metrics(parks_gdf, DEFAULT_GHS_RASTER, "current")
 
-    # Set up the projected demand raster
-    all_isochrone_bounds = parks_gdf["isochrone_polygon"].total_bounds
-    all_isochrone_bounds_polygon = box(*all_isochrone_bounds)
-
-    isochrone_crs = parks_gdf["isochrone_polygon"].crs
-
+    # Open the population raster once for the entire analysis
     with PopulationRaster(DEFAULT_GHS_RASTER) as pop_raster:
-        raster_crs = pop_raster.crs
-        raster_nodata = pop_raster.nodata
+        # Calculate CURRENT demand using base population raster
+        parks_gdf = append_demand_metrics(parks_gdf, pop_raster, "current")
+
+        # Set up the projected demand raster
+        all_isochrone_bounds = parks_gdf["isochrone_polygon"].total_bounds
+        all_isochrone_bounds_polygon = box(*all_isochrone_bounds)
+        isochrone_crs = parks_gdf["isochrone_polygon"].crs
 
         # Clip population raster to study area (base layer)
         population_array, _, population_transform = pop_raster.clip_to_polygon(
@@ -199,7 +228,7 @@ def demand_analysis(developments_gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
         projected_population_array = population_array.copy().astype(np.float32)
 
         # Overlay each development polygon's population onto the base
-        for idx, row in tqdm(
+        for _, row in tqdm(
             developments_gdf.iterrows(),
             total=len(developments_gdf),
             desc="Distributing development population",
@@ -223,48 +252,14 @@ def demand_analysis(developments_gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
                 development_transform,
             )
 
-    # Calculate projected demand using the combined population raster
-    with create_memory_raster(
-        projected_population_array, population_transform, raster_crs, raster_nodata
-    ) as projected_raster:
-        parks_gdf = append_demand_metrics(parks_gdf, projected_raster, "projected")
+        # Calculate PROJECTED demand using the modified population raster
+        with create_memory_raster(
+            projected_population_array, population_transform,
+            pop_raster.crs, pop_raster.nodata
+        ) as projected_raster:
+            parks_gdf = append_demand_metrics(parks_gdf, projected_raster, "projected")
 
-    # Calculate change from current to projected (positive = increase)
-    # Raw change stats
-    parks_gdf["pop_change"] = parks_gdf["projected_pop"] - parks_gdf["current_pop"]
-    parks_gdf["m2_per_person_change"] = (
-        parks_gdf["projected_m2_per_person"] - parks_gdf["current_m2_per_person"]
-    )
-    parks_gdf["acres_per_1000_change"] = (
-        parks_gdf["projected_acres_per_1000"] - parks_gdf["current_acres_per_1000"]
-    )
-
-    # Weighted change stats (distance-decay weighted)
-    parks_gdf["pop_weighted_change"] = (
-        parks_gdf["projected_pop_weighted"] - parks_gdf["current_pop_weighted"]
-    )
-    parks_gdf["m2_per_person_weighted_change"] = (
-        parks_gdf["projected_m2_per_person_weighted"] - parks_gdf["current_m2_per_person_weighted"]
-    )
-    parks_gdf["acres_per_1000_weighted_change"] = (
-        parks_gdf["projected_acres_per_1000_weighted"] - parks_gdf["current_acres_per_1000_weighted"]
-    )
-
-    # Percent change (useful for comparing across different sized parks)
-    parks_gdf["pop_pct_change"] = (
-        parks_gdf["pop_change"] / parks_gdf["current_pop"]
-    ) * 100
-    parks_gdf["acres_per_1000_pct_change"] = (
-        parks_gdf["acres_per_1000_change"] / parks_gdf["current_acres_per_1000"]
-    ) * 100
-    
-    # Weighted percent change
-    parks_gdf["pop_weighted_pct_change"] = (
-        parks_gdf["pop_weighted_change"] / parks_gdf["current_pop_weighted"]
-    ) * 100
-    parks_gdf["acres_per_1000_weighted_pct_change"] = (
-        parks_gdf["acres_per_1000_weighted_change"] / parks_gdf["current_acres_per_1000_weighted"]
-    ) * 100
+    parks_gdf = append_delta_metrics(parks_gdf)
 
     return parks_gdf
 
