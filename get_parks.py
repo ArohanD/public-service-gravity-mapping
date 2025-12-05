@@ -4,7 +4,7 @@
 import arcpy
 import sys
 from urllib.parse import quote
-from get_point import get_point
+from utils.arc_utils import get_point
 from shapely import Point
 import geopandas as gpd
 
