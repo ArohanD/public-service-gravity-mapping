@@ -32,6 +32,14 @@ development_polygon_two = Polygon(
 
 
 def append_isochrones_to_parks_gdf(parks_gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+    """Fetch isochrones for each park and add as a new column.
+    
+    Args:
+        parks_gdf: GeoDataFrame with park geometries
+        
+    Returns:
+        GeoDataFrame with new 'isochrone_polygon' column containing catchment areas
+    """
     isochrones = []
     # Convert parks to WGS84 for API calls
     parks_wgs84 = parks_gdf.to_crs("EPSG:4326")
@@ -100,6 +108,16 @@ def append_demand_metrics(
     return parks_gdf
 
 def append_delta_metrics(parks_gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+    """Calculate change metrics between current and projected demand.
+    
+    Requires parks_gdf to have current_* and projected_* columns from append_demand_metrics.
+    
+    Output columns added:
+        pop_change, m2_per_person_change, acres_per_1000_change: Raw differences
+        pop_weighted_change, m2_per_person_weighted_change, acres_per_1000_weighted_change: Weighted differences
+        pop_pct_change, acres_per_1000_pct_change: Percent changes (raw)
+        pop_weighted_pct_change, acres_per_1000_weighted_pct_change: Percent changes (weighted)
+    """
     # Calculate change from current to projected (positive = increase)
     # Raw change stats
     parks_gdf["pop_change"] = parks_gdf["projected_pop"] - parks_gdf["current_pop"]

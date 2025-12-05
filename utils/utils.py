@@ -93,16 +93,25 @@ def create_population_raster_from_array(
     return raster
 
 
-# Keep legacy function for backward compatibility
 def create_memory_raster(array: np.ndarray, transform: Affine, crs, nodata=None):
     """
-    Context manager to create an in-memory raster from a numpy array.
+    Context manager to create an in-memory PopulationRaster from a numpy array.
     
-    Yields a PopulationRaster that can be used for demand calculations.
+    Use this when you need a PopulationRaster from computed data (e.g., projected population)
+    rather than from a file on disk.
+    
+    Args:
+        array: 2D numpy array of population data
+        transform: Affine transform for the raster
+        crs: Coordinate reference system
+        nodata: Optional nodata value
+        
+    Yields:
+        PopulationRaster instance that can be used for demand calculations
     
     Example:
-        with create_memory_raster(my_array, my_transform, "EPSG:4326") as pop_raster:
-            metrics = pop_raster.calculate_demand_metrics(...)
+        with create_memory_raster(projected_array, transform, "ESRI:54009") as pop_raster:
+            parks_gdf = append_demand_metrics(parks_gdf, pop_raster, "projected")
     """
     
     @contextmanager
