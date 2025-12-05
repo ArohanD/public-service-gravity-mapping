@@ -106,17 +106,18 @@ def calculate_demand(isochrones, raster_path, out_fc):
     return out_fc
 
 
-if not isochrones_layer:
-    isochrones = DEFAULT_ISCHRONE_LAYER
-else:
-    isochrones = isochrones_layer
+if __name__ == "__main__":
+    if not isochrones_layer:
+        isochrones = DEFAULT_ISCHRONE_LAYER
+    else:
+        isochrones = isochrones_layer
 
-if not ghs_raster:
-    raster_path = DEFAULT_GHS_RASTER
-else:
-    raster_path = ghs_raster
+    if not ghs_raster:
+        raster_path = DEFAULT_GHS_RASTER
+    else:
+        raster_path = ghs_raster
 
-if not out_fc:
-    out_fc = DEFAULT_OUT_FC
+    if not out_fc:
+        out_fc = DEFAULT_OUT_FC
 
-calculate_demand(isochrones, raster_path, out_fc)
+    calculate_demand(isochrones, raster_path, out_fc)
