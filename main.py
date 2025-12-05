@@ -9,24 +9,18 @@ from utils.html import generate_park_report
 # Enable GDAL memory datasets (required for rasterio.mask in newer GDAL versions)
 os.environ["GDAL_MEM_ENABLE_OPEN"] = "YES"
 
-import pyproj
 from shapely import Polygon
 from shapely.geometry import box, shape
 from utils.api import fetch_isochrone, get_parks_gdf_via_arc
 from constants import DEVELOPMENT_POLYGONS_GEOJSON
 import geopandas as gpd
 from tqdm import tqdm
-import rasterio
 import numpy as np
 from contextlib import nullcontext
 from utils.arc_utils import gdf_to_featureclass
-from utils.utils import (
-    calculate_demand_metrics_2sfca,
-    distribute_population_stats,
-    get_raster_clip_under_polygon,
-    overlay_rasters,
-    create_memory_raster,
-)
+from utils.utils import overlay_rasters, create_memory_raster
+from classes.PopulationRaster import PopulationRaster
+
 
 DEFAULT_GHS_RASTER = r"..\Data\GHS\GHS_POP_E2025_GLOBE_R2023A_54009_100_V1_0.tif"
 
@@ -62,7 +56,7 @@ def append_isochrones_to_parks_gdf(parks_gdf: gpd.GeoDataFrame) -> gpd.GeoDataFr
 
 def append_demand_metrics(
     parks_gdf: gpd.GeoDataFrame,
-    population_raster: str | rasterio.DatasetReader,
+    population_raster: str | PopulationRaster,
     demand_field_prefix: str,
     decay_type: str = "gaussian",
 ) -> gpd.GeoDataFrame:
@@ -70,8 +64,8 @@ def append_demand_metrics(
 
     Args:
         parks_gdf: GeoDataFrame with park geometries and isochrone_polygon column
-        population_raster: Either a file path string or an open rasterio DatasetReader
-        demand_field_prefix: Prefix for output columns (e.g., "current" -> "current_pop", "current_m2_per_person", etc.)
+        population_raster: Either a file path string or a PopulationRaster instance
+        demand_field_prefix: Prefix for output columns (e.g., "current" -> "current_pop", etc.)
         decay_type: Distance decay function ("none", "inverse", "inverse_square", "gaussian")
 
     Output columns added:
@@ -83,41 +77,27 @@ def append_demand_metrics(
         {prefix}_acres_per_1000: Acres per 1000 people
         {prefix}_acres_per_1000_weighted: Same but with distance decay
     """
-    # Handle both file path and already-open raster
+    # Handle both file path and PopulationRaster instance
     ctx = (
-        rasterio.open(population_raster)
+        PopulationRaster(population_raster)
         if isinstance(population_raster, str)
         else nullcontext(population_raster)
     )
 
-    with ctx as src:
-        # Transformer for isochrone polygons (WGS84 -> raster CRS)
-        isochrone_transformer = pyproj.Transformer.from_crs(
-            parks_gdf[
-                "isochrone_polygon"
-            ].crs,  # Source CRS from isochrone polygons (WGS84)
-            src.crs,  # Target CRS from raster
-            always_xy=True,
-        )
+    isochrone_crs = parks_gdf["isochrone_polygon"].crs
+    park_crs = parks_gdf.crs
 
-        # Transformer for park geometries (Web Mercator -> raster CRS)
-        park_transformer = pyproj.Transformer.from_crs(
-            parks_gdf.crs,  # Source CRS from park geometries (typically Web Mercator)
-            src.crs,  # Target CRS from raster
-            always_xy=True,
-        )
-
+    with ctx as pop_raster:
         for idx, row in tqdm(
             parks_gdf.iterrows(),
             total=len(parks_gdf),
             desc=f"Calculating {demand_field_prefix} demand metrics",
         ):
-            metrics = calculate_demand_metrics_2sfca(
+            metrics = pop_raster.calculate_demand_metrics(
                 isochrone_polygon=row["isochrone_polygon"],
                 park_geometry=row["geometry"],
-                raster=src,
-                isochrone_transformer=isochrone_transformer,
-                park_transformer=park_transformer,
+                isochrone_crs=isochrone_crs,
+                park_crs=park_crs,
                 decay_type=decay_type,
             )
 
@@ -206,16 +186,13 @@ def demand_analysis(developments_gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
 
     isochrone_crs = parks_gdf["isochrone_polygon"].crs
 
-    with rasterio.open(DEFAULT_GHS_RASTER) as population_raster:
-        transformer = pyproj.Transformer.from_crs(
-            isochrone_crs, population_raster.crs, always_xy=True
-        )
-        raster_crs = population_raster.crs
-        raster_nodata = population_raster.nodata
+    with PopulationRaster(DEFAULT_GHS_RASTER) as pop_raster:
+        raster_crs = pop_raster.crs
+        raster_nodata = pop_raster.nodata
 
         # Clip population raster to study area (base layer)
-        population_array, _, population_transform = get_raster_clip_under_polygon(
-            all_isochrone_bounds_polygon, population_raster, transformer
+        population_array, _, population_transform = pop_raster.clip_to_polygon(
+            all_isochrone_bounds_polygon, polygon_crs=isochrone_crs
         )
 
         # Start with the base population
@@ -234,8 +211,8 @@ def demand_analysis(developments_gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
                 continue
 
             # Distribute population for this development
-            development_array, development_transform = distribute_population_stats(
-                development_polygon, population_change, population_raster, transformer
+            development_array, development_transform = pop_raster.distribute_population(
+                development_polygon, population_change, polygon_crs=isochrone_crs
             )
 
             # Overlay onto the projected population
