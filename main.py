@@ -11,7 +11,7 @@ os.environ["GDAL_MEM_ENABLE_OPEN"] = "YES"
 
 from shapely import Polygon
 from shapely.geometry import box, shape
-from utils.api import fetch_isochrone, get_parks_gdf_via_arc
+from utils.api import fetch_isochrone, get_parks_gdf_via_arc_polygon
 from constants import DEVELOPMENT_POLYGONS_GEOJSON
 import geopandas as gpd
 from tqdm import tqdm
@@ -19,6 +19,8 @@ import numpy as np
 from utils.arc_utils import gdf_to_featureclass
 from utils.utils import overlay_rasters, create_memory_raster
 from classes.PopulationRaster import PopulationRaster
+from shapely.ops import unary_union
+
 
 
 DEFAULT_GHS_RASTER = r"..\Data\GHS\GHS_POP_E2025_GLOBE_R2023A_54009_100_V1_0.tif"
@@ -203,22 +205,13 @@ def demand_analysis(developments_gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
         development_isochrones, crs="EPSG:4326"
     )
 
-    # Get combined bounds of all development isochrones for park search
-    from shapely.ops import unary_union
-
+    # Combine all development isochrones into a single search area
     combined_isochrone = unary_union(development_isochrones)
-    combined_centroid = combined_isochrone.centroid
+    print("Searching for parks that intersect the combined development isochrone area")
 
-    # Calculate search radius from combined isochrone bounds
-    radius_degrees = combined_centroid.hausdorff_distance(combined_isochrone.boundary)
-    radius_meters = radius_degrees * 111000
-    print(
-        f"Searching for parks within {radius_meters:.0f} meters of development area center"
-    )
-
-    # Find parks in the combined area
-    parks_gdf = get_parks_gdf_via_arc(
-        combined_centroid, radius_meters, point_crs="EPSG:4326"
+    # Find parks that intersect the combined isochrone polygon
+    parks_gdf = get_parks_gdf_via_arc_polygon(
+        combined_isochrone, polygon_crs="EPSG:4326"
     )
 
     if len(parks_gdf) == 0:

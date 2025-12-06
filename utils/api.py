@@ -2,10 +2,9 @@ import arcpy
 import json
 import urllib.request
 import urllib.parse
-from shapely import Point
 import geopandas as gpd
 
-
+from shapely import wkt
 from config import MAPBOX_TOKEN
 
 arcpy.env.overwriteOutput = True
@@ -47,36 +46,39 @@ DEFAULT_WEB_LAYER = "https://services6.arcgis.com/Do88DoK2xjTUCXd1/arcgis/rest/s
 DEFAULT_DEFINITION_QUERY = "leisure = 'park'"
 
 
-def get_parks_gdf_via_arc(
-    point: Point,
-    radius: float,
+def get_parks_gdf_via_arc_polygon(
+    polygon,
     parks: str = DEFAULT_WEB_LAYER,
-    point_crs: str = "EPSG:4326",
+    polygon_crs: str = "EPSG:4326",
 ) -> gpd.GeoDataFrame:
-    """Get parks within a radius of a point using arcpy. Returns a GeoDataFrame.
+    """Get parks that intersect a polygon using arcpy. Returns a GeoDataFrame.
 
     Args:
-        point: Shapely Point geometry
-        radius: Buffer radius in meters
+        polygon: Shapely Polygon or MultiPolygon geometry
         parks: URL to parks feature service
-        point_crs: CRS of the input point (default: EPSG:4326 for WGS84)
+        polygon_crs: CRS of the input polygon (default: EPSG:4326 for WGS84)
     """
-    from shapely import wkt
 
     # Clean up existing layers
     if arcpy.Exists("parks_lyr"):
         arcpy.management.Delete("parks_lyr")
-    if arcpy.Exists("in_memory\\click_buffer"):
-        arcpy.management.Delete("in_memory\\click_buffer")
+    if arcpy.Exists("in_memory\\search_area"):
+        arcpy.management.Delete("in_memory\\search_area")
 
-    # Get EPSG code from point_crs
-    epsg_code = int(point_crs.split(":")[1])
+    # Get EPSG code from polygon_crs
+    epsg_code = int(polygon_crs.split(":")[1])
     sr = arcpy.SpatialReference(epsg_code)
 
-    # Create point geometry and buffer
-    pt_geom = arcpy.PointGeometry(arcpy.Point(point.x, point.y), sr)
-    buffer_fc = "in_memory\\click_buffer"
-    arcpy.analysis.Buffer(pt_geom, buffer_fc, f"{radius} Meters")
+    # Convert Shapely polygon to ArcPy geometry via WKT
+    arcpy_geom = arcpy.FromWKT(polygon.wkt, sr)
+
+    # Create a feature class from the geometry
+    search_fc = "in_memory\\search_area"
+    arcpy.management.CreateFeatureclass(
+        "in_memory", "search_area", "POLYGON", spatial_reference=sr
+    )
+    with arcpy.da.InsertCursor(search_fc, ["SHAPE@"]) as cursor:
+        cursor.insertRow([arcpy_geom])
 
     # Create parks layer with definition query
     arcpy.management.MakeFeatureLayer(parks, "parks_lyr", DEFAULT_DEFINITION_QUERY)
@@ -85,8 +87,8 @@ def get_parks_gdf_via_arc(
     parks_sr = arcpy.Describe("parks_lyr").spatialReference
     parks_epsg = parks_sr.factoryCode
 
-    # Select parks that intersect buffer
-    arcpy.management.SelectLayerByLocation("parks_lyr", "INTERSECT", buffer_fc)
+    # Select parks that intersect the search polygon
+    arcpy.management.SelectLayerByLocation("parks_lyr", "INTERSECT", search_fc)
 
     # Get count
     count = int(arcpy.management.GetCount("parks_lyr")[0])
@@ -112,7 +114,7 @@ def get_parks_gdf_via_arc(
             geometries.append(geom)
             attributes.append(dict(zip(fields, row[1:])))
 
-    # Create GeoDataFrame with the parks layer's CRS (not the input point's CRS)
+    # Create GeoDataFrame with the parks layer's CRS
     gdf = gpd.GeoDataFrame(attributes, geometry=geometries, crs=f"EPSG:{parks_epsg}")
 
     return gdf
