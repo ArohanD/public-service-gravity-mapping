@@ -1,13 +1,9 @@
 """HTML Report Generator for Park Demand Analysis."""
 
-import matplotlib
-matplotlib.use('Agg')  # Use non-interactive backend
-import matplotlib.pyplot as plt
-from matplotlib.patches import Patch
+import json
 from jinja2 import Template
 import geopandas as gpd
-import io
-import base64
+from shapely.geometry import mapping
 
 
 REPORT_TEMPLATE = """
@@ -16,14 +12,15 @@ REPORT_TEMPLATE = """
 <head>
     <meta charset="UTF-8">
     <title>Park Demand Analysis</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <style>
         body { font-family: Arial, sans-serif; max-width: 900px; margin: 0 auto; padding: 20px; }
         h1 { border-bottom: 2px solid #333; padding-bottom: 10px; }
         .park { margin: 30px 0; padding: 20px; border: 1px solid #ddd; }
         .park h2 { margin-top: 0; }
         .park-content { display: flex; gap: 20px; }
-        .park-map { flex: 1; }
-        .park-map img { width: 100%; }
+        .park-map { flex: 1; height: 250px; }
         .park-stats { flex: 1; }
         table { width: 100%; border-collapse: collapse; }
         th, td { text-align: left; padding: 8px; border-bottom: 1px solid #ddd; }
@@ -39,9 +36,7 @@ REPORT_TEMPLATE = """
     <div class="park">
         <h2>#{{ park.rank }}: {{ park.name }}</h2>
         <div class="park-content">
-            <div class="park-map">
-                {{ park.map_html | safe }}
-            </div>
+            <div id="map-{{ park.rank }}" class="park-map"></div>
             <div class="park-stats">
                 <table>
                     <tr>
@@ -71,45 +66,38 @@ REPORT_TEMPLATE = """
         </div>
     </div>
     {% endfor %}
+    
+    <script>
+    {% for park in parks %}
+    (function() {
+        var map = L.map('map-{{ park.rank }}');
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '&copy; OpenStreetMap'
+        }).addTo(map);
+        
+        var isochrone = L.geoJSON({{ park.isochrone_geojson | safe }}, {
+            style: { color: 'blue', fillColor: 'lightblue', fillOpacity: 0.3, weight: 1 }
+        }).addTo(map);
+        
+        L.geoJSON({{ park.park_geojson | safe }}, {
+            style: { color: 'darkgreen', fillColor: 'green', fillOpacity: 0.6, weight: 1 }
+        }).addTo(map);
+        
+        map.fitBounds(isochrone.getBounds().pad(0.1));
+    })();
+    {% endfor %}
+    </script>
 </body>
 </html>
 """
 
 
-def _create_park_map(park_row, parks_crs) -> str:
-    """Create a base64-encoded PNG map image for a park."""
-    park_geom = park_row["geometry"]
-    isochrone_geom = park_row["isochrone_polygon"]
-    
-    park_gdf = gpd.GeoDataFrame(geometry=[park_geom], crs=parks_crs)
-    isochrone_gdf = gpd.GeoDataFrame(geometry=[isochrone_geom], crs="EPSG:4326")
-    park_gdf_plot = park_gdf.to_crs("EPSG:4326")
-    
-    fig, ax = plt.subplots(figsize=(4, 4))
-    
-    isochrone_gdf.plot(ax=ax, facecolor='lightblue', edgecolor='blue', alpha=0.3, linewidth=1)
-    park_gdf_plot.plot(ax=ax, facecolor='green', edgecolor='darkgreen', alpha=0.6, linewidth=1)
-    
-    bounds = isochrone_gdf.total_bounds
-    pad = (bounds[2] - bounds[0]) * 0.1
-    ax.set_xlim(bounds[0] - pad, bounds[2] + pad)
-    ax.set_ylim(bounds[1] - pad, bounds[3] - pad + (bounds[3] - bounds[1]) * 0.2)
-    ax.set_axis_off()
-    
-    legend_elements = [
-        Patch(facecolor='green', edgecolor='darkgreen', alpha=0.6, label='Park'),
-        Patch(facecolor='lightblue', edgecolor='blue', alpha=0.3, label='Walk zone')
-    ]
-    ax.legend(handles=legend_elements, loc='upper right', fontsize=8)
-    plt.tight_layout()
-    
-    buf = io.BytesIO()
-    fig.savefig(buf, format='png', dpi=100, bbox_inches='tight')
-    buf.seek(0)
-    img_base64 = base64.b64encode(buf.read()).decode('utf-8')
-    plt.close(fig)
-    
-    return f'<img src="data:image/png;base64,{img_base64}" alt="Park map">'
+def _geom_to_geojson(geom, source_crs, target_crs="EPSG:4326") -> str:
+    """Convert a geometry to GeoJSON string, reprojecting if needed."""
+    gdf = gpd.GeoDataFrame(geometry=[geom], crs=source_crs)
+    if str(source_crs) != target_crs:
+        gdf = gdf.to_crs(target_crs)
+    return json.dumps(mapping(gdf.geometry.iloc[0]))
 
 
 def _get_park_name(park_row) -> str:
@@ -132,18 +120,15 @@ def generate_park_report(parks_gdf: gpd.GeoDataFrame, output_path: str = "park_d
     
     Parks are sorted by weighted acres per 1000 change (most negative first).
     """
-    # Calculate change for sorting
     parks_gdf = parks_gdf.copy()
     parks_gdf["_change"] = (
         parks_gdf["projected_acres_per_1000_weighted"].fillna(0) - 
         parks_gdf["current_acres_per_1000_weighted"].fillna(0)
     )
     
-    # Get parks with actual change, sorted by most negative
     parks_with_change = parks_gdf[parks_gdf["_change"] != 0]
     top_parks = parks_with_change.nsmallest(top_n, "_change")
     
-    # Build list of park dictionaries for template
     park_reports = []
     for rank, (idx, row) in enumerate(top_parks.iterrows(), 1):
         park_reports.append({
@@ -156,10 +141,10 @@ def generate_park_report(parks_gdf: gpd.GeoDataFrame, output_path: str = "park_d
             "projected_acres_per_1000_weighted": _safe_get(row, "projected_acres_per_1000_weighted"),
             "acres_weighted_change": _safe_get(row, "acres_per_1000_weighted_change"),
             "acres_weighted_pct_change": _safe_get(row, "acres_per_1000_weighted_pct_change"),
-            "map_html": _create_park_map(row, parks_gdf.crs)
+            "park_geojson": _geom_to_geojson(row["geometry"], parks_gdf.crs),
+            "isochrone_geojson": _geom_to_geojson(row["isochrone_polygon"], "EPSG:4326"),
         })
     
-    # Render and save
     html_content = Template(REPORT_TEMPLATE).render(parks=park_reports)
     
     with open(output_path, "w", encoding="utf-8") as f:
