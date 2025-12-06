@@ -15,7 +15,7 @@ def fetch_isochrone(lon, lat, mode="driving-traffic", token=MAPBOX_TOKEN) -> dic
     Fetch an isochrone from the Mapbox API for a given longitude and latitude.
     Returns a JSON object containing the isochrone polygons, or None on error.
     """
-    mode = "walking"  # reducing range for now to reduce API calls TODO: add back in driving-traffic
+    # mode = "walking"  # Uncomment this to reduce isochrone scope during dev
     base_url = f"https://api.mapbox.com/isochrone/v1/mapbox/{mode}"
     coords = f"{lon},{lat}"
 

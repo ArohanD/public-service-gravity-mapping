@@ -291,7 +291,9 @@ developments_gdf = gpd.GeoDataFrame(
 arcpy.AddMessage("Starting demand analysis...")
 parks_gdf = demand_analysis(developments_gdf)
 
-generate_park_report(parks_gdf)
+# Generate and open HTML report
+html_report_path = generate_park_report(parks_gdf)
+os.startfile(html_report_path)
 
 # Add results to map
 arcpy.AddMessage(f"Analysis complete. Adding {len(parks_gdf)} parks to map...")
