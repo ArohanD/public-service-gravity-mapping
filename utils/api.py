@@ -1,3 +1,11 @@
+# utils/api.py
+#
+# Author: Arohan Dutt
+# Date: December 2025
+#
+# Purpose: Various API utilities for the project.
+#
+
 import arcpy
 import json
 import urllib.request
@@ -6,6 +14,7 @@ import geopandas as gpd
 
 from shapely import wkt
 from config import MAPBOX_TOKEN
+from constants import DEFAULT_DEFINITION_QUERY, DEFAULT_WEB_LAYER
 
 arcpy.env.overwriteOutput = True
 
@@ -14,6 +23,8 @@ def fetch_isochrone(lon, lat, mode="driving-traffic", token=MAPBOX_TOKEN) -> dic
     """
     Fetch an isochrone from the Mapbox API for a given longitude and latitude.
     Returns a JSON object containing the isochrone polygons, or None on error.
+
+    Docs: https://docs.mapbox.com/playground/isochrone/
     """
     # mode = "walking"  # Uncomment this to reduce isochrone scope during dev
     base_url = f"https://api.mapbox.com/isochrone/v1/mapbox/{mode}"
@@ -37,13 +48,6 @@ def fetch_isochrone(lon, lat, mode="driving-traffic", token=MAPBOX_TOKEN) -> dic
     except Exception as e:
         arcpy.AddError(f"Failed to fetch isochrone for ({lon}, {lat}): {e}")
         return None
-
-
-# Get parks within a radius of a point using ArcGIS feature services.
-
-# Default parameters
-DEFAULT_WEB_LAYER = "https://services6.arcgis.com/Do88DoK2xjTUCXd1/arcgis/rest/services/OSM_NA_Leisure/FeatureServer/0"
-DEFAULT_DEFINITION_QUERY = "leisure = 'park'"
 
 
 def get_parks_gdf_via_arc_polygon(

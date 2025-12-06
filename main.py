@@ -4,8 +4,8 @@
 # Date: December 2025
 #
 # Purpose: Analyze the impact of new residential developments on park demand
-#          using a variety of demand metrics. Two-Step Floating Catchment Area 
-#          (2SFCA) method with distance decay weighting is used to calculate 
+#          using a variety of demand metrics. Two-Step Floating Catchment Area
+#          (2SFCA) method with distance decay weighting is used to calculate
 #          population and acreage demand metrics for each park. See
 #          PopulationRaster.py more details on the theory.
 #
@@ -15,13 +15,13 @@
 #            and a global population raster (GHS-POP).
 #          --Fetch driving isochrones from Mapbox API to define
 #            catchment areas for developments and nearby parks.
-#            Driving is used as this polygon encompasses the other modes 
+#            Driving is used as this polygon encompasses the other modes
 #            of transport. See api.py for more details.
 #          --Query OpenStreetMap parks data via ArcGIS feature service
 #            for parks that intersect the development catchment areas.
 #          --Calculate current demand metrics (population, demand, etc.)
 #            using the base population raster.
-#          --Distribute new population across rasters clipped to the 
+#          --Distribute new population across rasters clipped to the
 #            development polygons.
 #          --Recalculate projected demand metrics and calculate delta metrics.
 #          --Generate an HTML report with Leaflet maps showing the
@@ -75,7 +75,6 @@ from classes.PopulationRaster import PopulationRaster
 from shapely.ops import unary_union
 
 
-
 DEFAULT_GHS_RASTER = r"..\Data\GHS\GHS_POP_E2025_GLOBE_R2023A_54009_100_V1_0.tif"
 
 development_polygon_one = Polygon(
@@ -88,10 +87,10 @@ development_polygon_two = Polygon(
 
 def append_isochrones_to_parks_gdf(parks_gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
     """Fetch isochrones for each park and add as a new column.
-    
+
     Args:
         parks_gdf: GeoDataFrame with park geometries
-        
+
     Returns:
         GeoDataFrame with new 'isochrone_polygon' column containing catchment areas
     """
@@ -162,11 +161,12 @@ def append_demand_metrics(
 
     return parks_gdf
 
+
 def append_delta_metrics(parks_gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
     """Calculate change metrics between current and projected demand.
-    
+
     Requires parks_gdf to have current_* and projected_* columns from append_demand_metrics.
-    
+
     Output columns added:
         pop_change, m2_per_person_change, acres_per_1000_change: Raw differences
         pop_weighted_change, m2_per_person_weighted_change, acres_per_1000_weighted_change: Weighted differences
@@ -188,10 +188,12 @@ def append_delta_metrics(parks_gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
         parks_gdf["projected_pop_weighted"] - parks_gdf["current_pop_weighted"]
     )
     parks_gdf["m2_per_person_weighted_change"] = (
-        parks_gdf["projected_m2_per_person_weighted"] - parks_gdf["current_m2_per_person_weighted"]
+        parks_gdf["projected_m2_per_person_weighted"]
+        - parks_gdf["current_m2_per_person_weighted"]
     )
     parks_gdf["acres_per_1000_weighted_change"] = (
-        parks_gdf["projected_acres_per_1000_weighted"] - parks_gdf["current_acres_per_1000_weighted"]
+        parks_gdf["projected_acres_per_1000_weighted"]
+        - parks_gdf["current_acres_per_1000_weighted"]
     )
 
     # Percent change (useful for comparing across different sized parks)
@@ -201,16 +203,18 @@ def append_delta_metrics(parks_gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
     parks_gdf["acres_per_1000_pct_change"] = (
         parks_gdf["acres_per_1000_change"] / parks_gdf["current_acres_per_1000"]
     ) * 100
-    
+
     # Weighted percent change
     parks_gdf["pop_weighted_pct_change"] = (
         parks_gdf["pop_weighted_change"] / parks_gdf["current_pop_weighted"]
     ) * 100
     parks_gdf["acres_per_1000_weighted_pct_change"] = (
-        parks_gdf["acres_per_1000_weighted_change"] / parks_gdf["current_acres_per_1000_weighted"]
+        parks_gdf["acres_per_1000_weighted_change"]
+        / parks_gdf["current_acres_per_1000_weighted"]
     ) * 100
 
     return parks_gdf
+
 
 def demand_analysis(developments_gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
     """
@@ -278,17 +282,15 @@ def demand_analysis(developments_gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
 
     # Open the population raster once for the entire analysis
     with PopulationRaster(DEFAULT_GHS_RASTER) as pop_raster:
-
         # ------------------
         # Step 4: Calculate current 2SFCA demand metrics using base population.
         parks_gdf = append_demand_metrics(parks_gdf, pop_raster, "current")
 
         # ------------------
         # Step 5: Distribute development population onto the raster.
-        study_area = unary_union([
-            parks_gdf["isochrone_polygon"].union_all(),
-            developments_gdf.union_all()
-        ])
+        study_area = unary_union(
+            [parks_gdf["isochrone_polygon"].union_all(), developments_gdf.union_all()]
+        )
         all_isochrone_bounds_polygon = box(*study_area.bounds)
         isochrone_crs = parks_gdf["isochrone_polygon"].crs
 
@@ -328,8 +330,10 @@ def demand_analysis(developments_gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
         # ------------------
         # Step 6: Calculate projected 2SFCA demand metrics.
         with create_memory_raster(
-            projected_population_array, population_transform,
-            pop_raster.crs, pop_raster.nodata
+            projected_population_array,
+            population_transform,
+            pop_raster.crs,
+            pop_raster.nodata,
         ) as projected_raster:
             parks_gdf = append_demand_metrics(parks_gdf, projected_raster, "projected")
 

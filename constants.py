@@ -36,3 +36,6 @@ DEVELOPMENT_POLYGONS_GEOJSON = {
         },
     ],
 }
+
+DEFAULT_WEB_LAYER = "https://services6.arcgis.com/Do88DoK2xjTUCXd1/arcgis/rest/services/OSM_NA_Leisure/FeatureServer/0"
+DEFAULT_DEFINITION_QUERY = "leisure = 'park'"

@@ -1,3 +1,13 @@
+# classes/PopulationRaster.py
+#
+# Author: Arohan Dutt
+# Date: December 2025
+#
+# Purpose: This class is used to wrap a population raster with coordinate transformation and analysis utilities.
+#          It is used to calculate 2SFCA demand metrics for each park's isochrone.
+#          See main.py for more details.
+#
+
 import rasterio
 from rasterio import Affine
 from rasterio.mask import mask
@@ -15,6 +25,8 @@ class PopulationRaster:
     native CRS and the class handles reprojection to the raster's CRS.
 
     ## Two-Step Floating Catchment Area (2SFCA) Method
+    The section is a an riff of the methods described in this paper:
+    https://www.sciencedirect.com/science/article/pii/S1353829209000574#aep-section-id16
 
     This class implements 2SFCA for measuring park accessibility. The key idea:
 
@@ -51,7 +63,28 @@ class PopulationRaster:
 
     Available decay functions are listed in _apply_distance_decay.
 
-    Usage:
+    Attributes
+    ----------
+    crs : pyproj.CRS
+        The raster's coordinate reference system (read-only property)
+    nodata : float
+        The raster's nodata value, used to identify invalid pixels (read-only property)
+    transform : rasterio.Affine
+        The raster's affine transform for coordinate conversions (read-only property)
+
+    Methods
+    -------
+    get_transformer(source_crs):
+        Get a pyproj Transformer from source_crs to this raster's CRS.
+    clip_to_polygon(polygon, polygon_crs, all_touched):
+        Clip the raster to a polygon, returning array, mask, and transform.
+    distribute_population(polygon, population_change, polygon_crs):
+        Distribute population change randomly across valid cells in a polygon.
+    calculate_demand_metrics(isochrone_polygon, park_geometry, ...):
+        Calculate 2SFCA demand metrics (population, area ratios) for a park.
+
+    Usage
+    -----
         with PopulationRaster("path/to/raster.tif") as pop:
             # Clip to a polygon (in WGS84)
             array, valid_mask, transform = pop.clip_to_polygon(polygon, "EPSG:4326")

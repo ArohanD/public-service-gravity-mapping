@@ -1,3 +1,11 @@
+# utils/arc_utils.py
+#
+# Author: Arohan Dutt
+# Date: December 2025
+#
+# Purpose: Various ArcGIS utilities for the project.
+#
+
 import arcpy
 import os
 import tempfile
@@ -31,7 +39,7 @@ def gdf_to_featureclass(gdf, output_path: str = None, layer_name: str = "gdf_lay
 
     try:
         # Drop any geometry columns that aren't the main geometry
-        # (Arc doesn't like multiple geometry columns or GeoSeries columns)
+        # (Arc can get weird with multiple geometry columns)
         cols_to_drop = []
         for col in gdf.columns:
             if col == "geometry":
