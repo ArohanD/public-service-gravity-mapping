@@ -1,4 +1,57 @@
-# inputs: development polygon, population raster
+# main.py
+#
+# Author: Arohan Dutt
+# Date: December 2025
+#
+# Purpose: Analyze the impact of new residential developments on park demand
+#          using a variety of demand metrics. Two-Step Floating Catchment Area 
+#          (2SFCA) method with distance decay weighting is used to calculate 
+#          population and acreage demand metrics for each park. See
+#          PopulationRaster.py more details on the theory.
+#
+#
+# Procedure Summary:
+#          --Take development polygons with expected population changes
+#            and a global population raster (GHS-POP).
+#          --Fetch driving isochrones from Mapbox API to define
+#            catchment areas for developments and nearby parks.
+#            Driving is used as this polygon encompasses the other modes 
+#            of transport. See api.py for more details.
+#          --Query OpenStreetMap parks data via ArcGIS feature service
+#            for parks that intersect the development catchment areas.
+#          --Calculate current demand metrics (population, demand, etc.)
+#            using the base population raster.
+#          --Distribute new population across rasters clipped to the 
+#            development polygons.
+#          --Recalculate projected demand metrics and calculate delta metrics.
+#          --Generate an HTML report with Leaflet maps showing the
+#            top impacted parks and their demand changes.
+#
+#
+# Main Steps:
+# Step 1: Fetch isochrones for development polygons to define search area.
+# Step 2: Query parks that intersect the combined development isochrones.
+# Step 3: Fetch isochrones for each park (travel time catchment areas).
+# Step 4: Calculate current 2SFCA demand metrics using base population.
+# Step 5: Distribute development population onto the raster at development polygon locations.
+# Step 6: Calculate projected 2SFCA demand metrics.
+# Step 7: Calculate delta metrics (change from current to projected).
+# Step 8: Generate HTML report and export shapefile.
+#
+#
+# Inputs:
+#   - Development polygons (defined in constants.py as GeoJSON)
+#   - Population raster (Optional, default is GHS-POP 100m resolution)
+#   - Mapbox API token (for isochrone requests, placed in config.py)
+#   - ArcGIS feature service URL (for park polygons)
+#
+# Outputs:
+#   - HTML report with interactive Leaflet maps (park_demand_report.html)
+#   - Shapefile with park polygons and demand metrics (placed on an active ArcGIS Pro map)
+#
+# Software Requirements:
+#   - ArcGIS Pro with arcpy
+#   - Python packages: geopandas, rasterio, shapely, tqdm, jinja2
 #
 
 import os
@@ -182,7 +235,8 @@ def demand_analysis(developments_gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
     elif developments_gdf.crs != "EPSG:4326":
         developments_gdf = developments_gdf.to_crs("EPSG:4326")
 
-    # Get isochrones for all development polygons to determine search area
+    # ------------------
+    # Step 1: Fetch isochrones for development polygons to define search area.
     log(f"Processing {len(developments_gdf)} development polygons...")
 
     development_isochrones = []
@@ -205,11 +259,11 @@ def demand_analysis(developments_gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
         development_isochrones, crs="EPSG:4326"
     )
 
-    # Combine all development isochrones into a single search area
+    # ------------------
+    # Step 2: Query parks that intersect the combined development isochrones.
     combined_isochrone = unary_union(development_isochrones)
     log("Searching for parks that intersect the combined development isochrone area")
 
-    # Find parks that intersect the combined isochrone polygon
     parks_gdf = get_parks_gdf_via_arc_polygon(
         combined_isochrone, polygon_crs="EPSG:4326"
     )
@@ -218,14 +272,19 @@ def demand_analysis(developments_gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
         log("No parks found in the search area")
         return parks_gdf
 
+    # ------------------
+    # Step 3: Fetch isochrones for each park (travel time catchment areas).
     parks_gdf = append_isochrones_to_parks_gdf(parks_gdf)
 
     # Open the population raster once for the entire analysis
     with PopulationRaster(DEFAULT_GHS_RASTER) as pop_raster:
-        # Calculate CURRENT demand using base population raster
+
+        # ------------------
+        # Step 4: Calculate current 2SFCA demand metrics using base population.
         parks_gdf = append_demand_metrics(parks_gdf, pop_raster, "current")
 
-        # Set up the projected demand raster - include development polygons in bounds
+        # ------------------
+        # Step 5: Distribute development population onto the raster.
         study_area = unary_union([
             parks_gdf["isochrone_polygon"].union_all(),
             developments_gdf.union_all()
@@ -266,13 +325,16 @@ def demand_analysis(developments_gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
                 development_transform,
             )
 
-        # Calculate PROJECTED demand using the modified population raster
+        # ------------------
+        # Step 6: Calculate projected 2SFCA demand metrics.
         with create_memory_raster(
             projected_population_array, population_transform,
             pop_raster.crs, pop_raster.nodata
         ) as projected_raster:
             parks_gdf = append_demand_metrics(parks_gdf, projected_raster, "projected")
 
+    # ------------------
+    # Step 7: Calculate delta metrics (change from current to projected).
     parks_gdf = append_delta_metrics(parks_gdf)
 
     return parks_gdf
@@ -291,11 +353,11 @@ developments_gdf = gpd.GeoDataFrame(
 arcpy.AddMessage("Starting demand analysis...")
 parks_gdf = demand_analysis(developments_gdf)
 
-# Generate and open HTML report
+# ------------------
+# Step 8: Generate HTML report and export shapefile.
 html_report_path = generate_park_report(parks_gdf)
 os.startfile(html_report_path)
 
-# Add results to map
 arcpy.AddMessage(f"Analysis complete. Adding {len(parks_gdf)} parks to map...")
 
 # Save to a shapefile instead of in-memory (more reliable)
