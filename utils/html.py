@@ -5,6 +5,8 @@ from jinja2 import Template
 import geopandas as gpd
 from shapely.geometry import mapping
 
+from utils.utils import log
+
 
 REPORT_TEMPLATE = """
 <!DOCTYPE html>
@@ -150,5 +152,5 @@ def generate_park_report(parks_gdf: gpd.GeoDataFrame, output_path: str = "park_d
     with open(output_path, "w", encoding="utf-8") as f:
         f.write(html_content)
     
-    print(f"Report saved to: {output_path}")
+    log(f"Report saved to: {output_path}")
     return output_path

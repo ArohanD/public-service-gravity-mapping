@@ -5,6 +5,15 @@ from rasterio.io import MemoryFile
 import numpy as np
 from contextlib import contextmanager
 from classes.PopulationRaster import PopulationRaster
+import arcpy
+
+def log(*args, **kwargs):
+    # if arcpy, use arcpy.AddMessage
+    try:
+        arcpy.mp.ArcGISProject("CURRENT")
+        arcpy.AddMessage(*args, **kwargs)
+    except OSError:
+        print(*args, **kwargs)
 
 def overlay_rasters(
     base_array: np.ndarray,

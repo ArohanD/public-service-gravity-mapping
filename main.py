@@ -17,7 +17,7 @@ import geopandas as gpd
 from tqdm import tqdm
 import numpy as np
 from utils.arc_utils import gdf_to_featureclass
-from utils.utils import overlay_rasters, create_memory_raster
+from utils.utils import log, overlay_rasters, create_memory_raster
 from classes.PopulationRaster import PopulationRaster
 from shapely.ops import unary_union
 
@@ -177,13 +177,13 @@ def demand_analysis(developments_gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
 
     # Ensure developments are in WGS84
     if developments_gdf.crs is None:
-        print("Warning: developments_gdf has no CRS, assuming WGS84")
+        log("Warning: developments_gdf has no CRS, assuming WGS84")
         developments_gdf = developments_gdf.set_crs("EPSG:4326")
     elif developments_gdf.crs != "EPSG:4326":
         developments_gdf = developments_gdf.to_crs("EPSG:4326")
 
     # Get isochrones for all development polygons to determine search area
-    print(f"Processing {len(developments_gdf)} development polygons...")
+    log(f"Processing {len(developments_gdf)} development polygons...")
 
     development_isochrones = []
     for idx, row in tqdm(
@@ -207,7 +207,7 @@ def demand_analysis(developments_gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
 
     # Combine all development isochrones into a single search area
     combined_isochrone = unary_union(development_isochrones)
-    print("Searching for parks that intersect the combined development isochrone area")
+    log("Searching for parks that intersect the combined development isochrone area")
 
     # Find parks that intersect the combined isochrone polygon
     parks_gdf = get_parks_gdf_via_arc_polygon(
@@ -215,7 +215,7 @@ def demand_analysis(developments_gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
     )
 
     if len(parks_gdf) == 0:
-        print("No parks found in the search area")
+        log("No parks found in the search area")
         return parks_gdf
 
     parks_gdf = append_isochrones_to_parks_gdf(parks_gdf)
@@ -225,9 +225,12 @@ def demand_analysis(developments_gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
         # Calculate CURRENT demand using base population raster
         parks_gdf = append_demand_metrics(parks_gdf, pop_raster, "current")
 
-        # Set up the projected demand raster
-        all_isochrone_bounds = parks_gdf["isochrone_polygon"].total_bounds
-        all_isochrone_bounds_polygon = box(*all_isochrone_bounds)
+        # Set up the projected demand raster - include development polygons in bounds
+        study_area = unary_union([
+            parks_gdf["isochrone_polygon"].union_all(),
+            developments_gdf.union_all()
+        ])
+        all_isochrone_bounds_polygon = box(*study_area.bounds)
         isochrone_crs = parks_gdf["isochrone_polygon"].crs
 
         # Clip population raster to study area (base layer)
@@ -311,5 +314,5 @@ try:
         arcpy.AddWarning("No active map found")
 except Exception:
     # "CURRENT" error means we're running from command line, not ArcGIS Pro
-    print(f"Note: Not running in ArcGIS Pro - shapefile saved to: {fc_path}")
-    print("You can manually add this shapefile to your map.")
+    log(f"Note: Not running in ArcGIS Pro - shapefile saved to: {fc_path}")
+    log("You can manually add this shapefile to your map.")
