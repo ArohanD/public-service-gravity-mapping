@@ -53,52 +53,10 @@ def overlay_rasters(
     return result
 
 
-def create_population_raster_from_array(
-    array: np.ndarray,
-    transform: Affine,
-    crs,
-    nodata=None
-) -> "PopulationRaster":
-    """
-    Create a PopulationRaster from a numpy array (in-memory).
-    
-    Args:
-        array: 2D numpy array of population data
-        transform: Affine transform for the raster
-        crs: Coordinate reference system
-        nodata: Optional nodata value
-        
-    Returns:
-        PopulationRaster wrapping the in-memory data
-        
-    Note: The returned PopulationRaster must be used within a MemoryFile context.
-    Use create_memory_raster() for a simpler context manager approach.
-    """
-    memfile = MemoryFile()
-    with memfile.open(
-        driver="GTiff",
-        height=array.shape[0],
-        width=array.shape[1],
-        count=1,
-        dtype=array.dtype,
-        crs=crs,
-        transform=transform,
-        nodata=nodata,
-    ) as dst:
-        dst.write(array, 1)
-    
-    src = memfile.open()
-    raster = PopulationRaster(src)
-    raster._memfile = memfile  # Keep reference to prevent garbage collection
-    return raster
-
-
+@contextmanager
 def create_memory_raster(array: np.ndarray, transform: Affine, crs, nodata=None):
     """
     Context manager to create an in-memory PopulationRaster from a numpy array.
-    
-    Use this when you need a PopulationRaster from computed data (e.g., projected population)
-    rather than from a file on disk.
     
     Args:
         array: 2D numpy array of population data
@@ -107,29 +65,24 @@ def create_memory_raster(array: np.ndarray, transform: Affine, crs, nodata=None)
         nodata: Optional nodata value
         
     Yields:
-        PopulationRaster instance that can be used for demand calculations
+        PopulationRaster instance
     
     Example:
-        with create_memory_raster(projected_array, transform, "ESRI:54009") as pop_raster:
+        with create_memory_raster(projected_array, transform, crs) as pop_raster:
             parks_gdf = append_demand_metrics(parks_gdf, pop_raster, "projected")
     """
-    
-    @contextmanager
-    def _create():
-        with MemoryFile() as memfile:
-            with memfile.open(
-                driver="GTiff",
-                height=array.shape[0],
-                width=array.shape[1],
-                count=1,
-                dtype=array.dtype,
-                crs=crs,
-                transform=transform,
-                nodata=nodata,
-            ) as dst:
-                dst.write(array, 1)
-            
-            with memfile.open() as src:
-                yield PopulationRaster(src)
-    
-    return _create()
+    with MemoryFile() as memfile:
+        with memfile.open(
+            driver="GTiff",
+            height=array.shape[0],
+            width=array.shape[1],
+            count=1,
+            dtype=array.dtype,
+            crs=crs,
+            transform=transform,
+            nodata=nodata,
+        ) as dst:
+            dst.write(array, 1)
+        
+        with memfile.open() as src:
+            yield PopulationRaster(src)
