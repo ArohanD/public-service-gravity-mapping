@@ -13,6 +13,43 @@ class PopulationRaster:
     Handles CRS transformations internally, so you just pass geometries in their
     native CRS and the class handles reprojection to the raster's CRS.
     
+    ## Two-Step Floating Catchment Area (2SFCA) Method
+    
+    This class implements 2SFCA for measuring park accessibility. The key idea:
+    
+    **Step 1 (Supply Ratio):** For each park, calculate how much space is available
+    per person who can reach it:
+    
+        R = Park Area / Population in Catchment (isochrone for park)
+    
+    **Step 2 (Accessibility):** For each location (pixel), sum up the ratios of all parks
+    they can reach to get an accessibility score.
+    
+    ## How Population is Counted
+    
+    We use a population raster where each pixel (e.g., 100m x 100m) contains a population
+    count. The catchment is defined by an isochrone polygon (everywhere reachable within 
+    X minutes).
+    
+        Population Raster           Clipped to Isochrone
+        ┌───┬───┬───┬───┐          ┌───┬───┬───┬───┐
+        │ 5 │12 │ 8 │ 2 │          │   │12 │ 8 │   │
+        ├───┼───┼───┼───┤   -->    ├───┼───┼───┼───┤
+        │20 │35 │15 │ 4 │          │20 │35 │15 │   │
+        └───┴───┴───┴───┘          └───┴───┴───┴───┘
+        
+        Total population in catchment = 12 + 8 + 20 + 35 + 15 = 90
+    
+    ## Distance Decay Weighting
+    
+    Basic 2SFCA treats everyone equally. But someone 1 minute away uses the park
+    more than someone 14 minutes away. Distance decay fixes this by weighting
+    each pixel's population by how far it is from the park:
+    
+        weighted_pop = population × weight(distance)
+    
+    Available decay functions are listed in _apply_distance_decay.
+    
     Usage:
         with PopulationRaster("path/to/raster.tif") as pop:
             # Clip to a polygon (in WGS84)
@@ -82,29 +119,41 @@ class PopulationRaster:
         all_touched: bool = True
     ) -> tuple[np.ndarray, np.ndarray, Affine]:
         """
-        Clip the raster to a polygon.
+        Clip the raster to a polygon. This is used for both the isochrone and 
+        the development polygons.
+        
+        In 2SFCA, this is how we define "who can reach the park." The polygon
+        is typically an isochrone (everywhere reachable within X minutes), and
+        clipping the population raster to it gives us only the relevant pixels.
+
+        Only pixels inside the isochrone are kept and the raster is resized accordingly.
         
         Args:
             polygon: Shapely polygon geometry
             polygon_crs: CRS of the polygon (e.g., "EPSG:4326"). If None, assumes raster CRS.
-            all_touched: If True, include all pixels touched by polygon
+            all_touched: If True, include all pixels touched by polygon edge
+                         (recommended for catchment analysis to avoid gaps)
             
         Returns:
             Tuple of (clipped_array, valid_mask, transform) where:
-            - clipped_array: The clipped raster data
-            - valid_mask: Boolean mask indicating non-nodata pixels
-            - transform: Affine transform for the clipped raster
+            - clipped_array: The clipped raster data (population values)
+            - valid_mask: Boolean mask indicating non-nodata pixels (where people live)
+            - transform: Affine transform for the clipped raster (for coordinate math)
         """
         # Transform polygon to raster CRS if needed
+        # (polygon might be in lat/lon, raster might be in meters)
         if polygon_crs is not None:
             transformer = self.get_transformer(polygon_crs)
             polygon = shapely_transform(transformer.transform, polygon)
         
+        # Use rasterio's mask function to clip and crop in one step
         out_image, out_transform = mask(
             self._src, [polygon], crop=True, all_touched=all_touched
         )
         
         raster_array = out_image[0]
+        # valid_mask tells us which pixels have actual population data
+        # (vs nodata pixels like water, outside coverage, etc.)
         valid_mask = raster_array != self.nodata
         
         return raster_array, valid_mask, out_transform
@@ -116,7 +165,23 @@ class PopulationRaster:
         polygon_crs=None
     ) -> tuple[np.ndarray, Affine]:
         """
-        Distribute population change randomly across valid cells in a polygon.
+        Distribute population change across valid cells in a polygon.
+        
+        This is used to model future development: given a development polygon
+        and the expected number of new residents, distribute that population
+        across the raster cells within the polygon.
+        
+        Example: A new apartment complex (polygon) will add 500 people.
+        
+            Development Polygon          Distributed Population
+            ┌───────────────┐            ┌───┬───┬───┐
+            │               │            │ 85│120│ 95│  ← Random distribution
+            │  +500 people  │    -->     ├───┼───┼───┤    totaling 500
+            │               │            │110│ 90│   │
+            └───────────────┘            └───┴───┴───┘
+        
+        The output array can be overlaid onto the base population raster to
+        create a "projected" population raster for future demand analysis.
         
         Args:
             polygon: Shapely polygon (e.g., a development area)
@@ -124,8 +189,11 @@ class PopulationRaster:
             polygon_crs: CRS of the polygon. If None, assumes raster CRS.
             
         Returns:
-            Tuple of (output_array, transform) containing the distributed population
+            Tuple of (output_array, transform) where:
+            - output_array: Raster with distributed population (same grid as input)
+            - transform: Affine transform for positioning this array
         """
+        # Clip to get the valid cells within the development polygon
         raster_array, valid_mask, out_transform = self.clip_to_polygon(
             polygon, polygon_crs
         )
@@ -137,9 +205,11 @@ class PopulationRaster:
             raise ValueError("No valid cells found in the polygon")
         
         # Distribute population randomly across valid cells
+        # Each cell gets a random weight, then we normalize so weights sum to 1
         random_weights = np.random.rand(num_valid_cells)
         random_weights /= np.sum(random_weights)
         
+        # Create output array and assign population proportionally
         output = np.zeros(raster_array.shape, dtype=np.float32)
         output[valid_cells] = random_weights * population_change
         
@@ -157,8 +227,23 @@ class PopulationRaster:
         """
         Calculate 2SFCA demand metrics for a park.
         
+        This implements Step 1 of the Two-Step Floating Catchment Area method:
+        calculate the supply-to-demand ratio for a single park.
+        
+            R = Park Area / Population in Catchment
+        
+        With distance decay, population is weighted so closer people count more:
+        
+            R_weighted = Park Area / Σ(population × distance_weight)
+        
+        Example: A 5-acre park with 1000 people in its catchment:
+            - acres_per_1000 = 5 / (1000/1000) = 5.0 acres per 1000 people
+            - If weighted pop = 600, acres_per_1000_weighted = 5 / 0.6 = 8.3
+              (higher because distant people count less)
+        
         Args:
-            isochrone_polygon: The catchment area (walking zone) for the park
+            isochrone_polygon: The catchment area (travel time zone) for the park.
+                               This defines who can "reach" the park.
             park_geometry: The park polygon (for area and centroid)
             isochrone_crs: CRS of the isochrone. If None, assumes raster CRS.
             park_crs: CRS of the park geometry. If None, assumes raster CRS.
@@ -167,7 +252,7 @@ class PopulationRaster:
             
         Returns:
             Dictionary with metrics:
-            - pop: Raw population sum in isochrone
+            - pop: Raw population sum in isochrone (unweighted)
             - pop_weighted: Distance-weighted population sum
             - park_area_m2: Park area in square meters
             - m2_per_person: Square meters per person
@@ -202,11 +287,12 @@ class PopulationRaster:
             pop_weighted = float(np.sum(weighted_pop[valid_mask]))
             park_area_m2 = park_in_raster_crs.area
             
-            # 2SFCA ratios
+            # 2SFCA supply ratio: R = Supply / Demand
+            # Higher values = more space per person = less crowded
             m2_per_person = park_area_m2 / pop_raw if pop_raw > 0 else None
             m2_per_person_weighted = park_area_m2 / pop_weighted if pop_weighted > 0 else None
             
-            # Acres per 1000 people (more readable)
+            # Conversion: 1 acre = 4047 m²
             acres_per_1000 = (park_area_m2 / 4047) / (pop_raw / 1000) if pop_raw > 0 else None
             acres_per_1000_weighted = (park_area_m2 / 4047) / (pop_weighted / 1000) if pop_weighted > 0 else None
             
@@ -241,7 +327,45 @@ class PopulationRaster:
         decay_type: str = "gaussian",
         sigma_km: float = 0.5
     ) -> np.ndarray:
-        """Weight population cells by distance to a target point."""
+        """
+        Weight population cells by distance to a target point (e.g., park center).
+        
+        Distance decay addresses a limitation of basic 2SFCA: it treats everyone
+        in the catchment equally, but in reality, closer people use a park more.
+        
+            Basic 2SFCA:    Person 1 min away  = Person 14 min away  (both count as 1)
+            With decay:     Person 1 min away >> Person 14 min away  (weighted)
+        
+        Each pixel's population is multiplied by a weight between 0 and 1:
+            - weight ≈ 1.0 → very close, full count
+            - weight ≈ 0.5 → medium distance, half count
+            - weight ≈ 0.0 → far away, barely counts
+        
+        Available decay functions and their characteristics:
+        
+            Distance (km)  │ Inverse │ Inverse² │ Gaussian (σ=0.5)
+            ───────────────┼─────────┼──────────┼──────────────────
+                 0.0       │  1.00   │   1.00   │   1.00
+                 0.25      │  0.80   │   0.94   │   0.88
+                 0.5       │  0.67   │   0.80   │   0.61
+                 1.0       │  0.50   │   0.50   │   0.14
+                 2.0       │  0.33   │   0.20   │   0.00
+        
+        - Gaussian: Steep drop-off, emphasizes nearby population (recommended)
+        - Inverse: Gentle decay, distant people still count somewhat
+        - Inverse Square: Middle ground between the two
+        
+        Args:
+            pop_array: 2D array of population values (one per pixel)
+            transform: Affine transform to convert pixel indices to coordinates
+            target_x, target_y: Coordinates of the target point (park center)
+            decay_type: "none", "inverse", "inverse_square", or "gaussian"
+            sigma_km: For gaussian, controls the spread (higher = slower decay)
+                      σ = 0.5 means weight drops to ~61% at 0.5 km
+        
+        Returns:
+            Array of same shape with population × weight for each pixel
+        """
         if decay_type == "none":
             return pop_array
         
@@ -249,18 +373,30 @@ class PopulationRaster:
         col_indices, row_indices = np.meshgrid(np.arange(cols), np.arange(rows))
         
         # Convert pixel indices to world coordinates (cell centers)
+        # The +0.5 shifts from corner to center of each pixel
         cell_x = transform.c + (col_indices + 0.5) * transform.a
         cell_y = transform.f + (row_indices + 0.5) * transform.e
         
-        # Calculate distances in km
+        # Calculate Euclidean distance from each pixel center to park center
+        # Euclidian distance is not the most realistic distance metric, but the
+        # density of pixels and the emphasis on closer pixels being weighted more
+        # makes it a reasonable approximation.
+        # Divide by 1000 to convert meters to kilometers
         distances_km = np.sqrt((cell_x - target_x)**2 + (cell_y - target_y)**2) / 1000
         
         # Apply decay function
         if decay_type == "inverse":
+            # weight = 1 / (1 + d)
+            # Gentle decay: at 1 km, weight = 0.5
             weights = 1 / (1 + distances_km)
         elif decay_type == "inverse_square":
+            # weight = 1 / (1 + d²)
+            # Steeper than inverse: at 1 km, weight = 0.5
             weights = 1 / (1 + distances_km**2)
         elif decay_type == "gaussian":
+            # weight = e^(-d² / 2σ²)
+            # Bell curve: at d = σ, weight ≈ 0.61
+            # This is the most commonly used in 2SFCA literature
             weights = np.exp(-(distances_km**2) / (2 * sigma_km**2))
         else:
             weights = np.ones_like(distances_km)
